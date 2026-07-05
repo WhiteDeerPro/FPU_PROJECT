@@ -1,0 +1,22 @@
+# VCS / Verdi generated files
+sim/[0-9][0-9]/
+sim/*_check/
+simv
+simv.daidir/
+simv.vdb/
+csrc/
+*.log
+*.key
+*.vpd
+*.vdb
+*.fsdb
+*.vcd
+verdiLog/
+novas.*
+ucli.key
+
+# Common temporary files
+.gitrepo/
+*.tmp
+*.bak
+*~
