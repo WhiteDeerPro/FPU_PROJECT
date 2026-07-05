@@ -133,9 +133,10 @@ Practical options:
 
 ## Notes For Later Integration
 
-- Add/sub and convert are currently combinational units. A top-level scheduler
-  can wrap them with valid/ready pipeline registers without changing the
-  request/response payload shape.
+- Non-pipe add/sub and convert units remain combinational reference datapaths.
+  A top-level scheduler can use the `units_pipe` variants when it needs fixed
+  latency and higher frequency without changing the request/response payload
+  shape.
 - Keep `fflags`, `tag`, and `rd` registered with the same stage as the data.
 - If cancellation-heavy subtraction is timing-critical, consider replacing the
   current align-subtract-normalize chain with a near-path/far-path split.
@@ -163,7 +164,9 @@ Current pipe RTL lives under `rtl/units_pipe/`.
   sideband; the final stage only adds `product_lop_pos`.
 - `fpu_compare_unit_pipe`: 2 stages. Stage 0 unpacks/classifies and computes
   compare predicates; stage 1 selects compare/min/max/class result and flags.
-- `fpu_convert_unit_pipe`: coarse 3-stage wrapper. Stage 0 registers the
-  request, stage 1 reuses the existing conversion core, and stage 2 registers
-  the selected response. This gives fixed-latency integration first; I2F/F2I
-  leaf-internal cuts remain the next timing refinement.
+- `fpu_convert_unit_pipe`: 2-cycle conversion pipe with I2F, F2F, and F2I
+  leaf-internal cuts. Each leaf runs stage 0 decode/normalize/shift/GRS
+  preparation, registers its intermediate payload, then runs stage 1 rounding,
+  boundary checks, and response packing before the output register. The wrapper
+  delays the request by the same two cycles and selects the matching leaf
+  response.
