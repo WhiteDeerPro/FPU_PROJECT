@@ -13,6 +13,7 @@
 //   x0 = recip_seed(mb)
 //   e  = 1.0 - mb*x
 //   x' = x + x*e
+//   S-format uses 2 NR rounds; D-format uses 3 NR rounds.
 //   q0 = signed(ma)*signed(x)
 //   r  = signed(ma) - signed(mb)*q0
 //   q  = q0 + r*signed(x)
@@ -814,7 +815,7 @@ module fpu_div_unit_pipe
           ctx_exp_delta[free_idx]  <= lhs.unbiased_exp - rhs.unbiased_exp;
           ctx_iter[free_idx]       <= 3'd0;
           ctx_iter_limit[free_idx] <= (req_i.rs_fmt == FPU_FMT_S) ? 3'd2 :
-                                                                     3'd4;
+                                                                     3'd3;
           ctx_valid_op[free_idx]   <= 1'b1;
         end
       end

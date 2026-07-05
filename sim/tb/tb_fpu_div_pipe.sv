@@ -3,7 +3,7 @@
 module tb_fpu_div_pipe;
   import fpu_pkg::*;
 
-  localparam int unsigned NUM_CASES = 22;
+  localparam int unsigned NUM_CASES = 43;
   localparam int unsigned TIMEOUT_CYCLES = 260;
 
   logic      clk_i;
@@ -18,6 +18,21 @@ module tb_fpu_div_pipe;
   int unsigned pass_cnt;
   int unsigned fail_cnt;
   int unsigned cycle_cnt;
+
+  logic [7:0]  trace_accept_tag;
+  logic [7:0]  trace_result_tag;
+  logic [31:0] trace_accept_s_src_a;
+  logic [31:0] trace_accept_s_src_b;
+  logic [31:0] trace_result_s;
+  logic [63:0] trace_accept_d_src_a;
+  logic [63:0] trace_accept_d_src_b;
+  logic [63:0] trace_result_d;
+
+  fpu_data_t   trace_src_a_by_tag  [256];
+  fpu_data_t   trace_src_b_by_tag  [256];
+  fpu_data_t   trace_result_by_tag [256];
+  fpu_fmt_e    trace_fmt_by_tag    [256];
+  fpu_fflags_t trace_fflags_by_tag [256];
 
   fpu_div_unit_pipe u_dut (
     .clk_i     (clk_i),
@@ -130,6 +145,48 @@ module tb_fpu_div_pipe;
         req.op = FPU_OP_ADD;
         return req;
       end
+      22: return make_req(FPU_FMT_S, FPU_RM_RNE,
+                          nanbox_s(32'h3f80_0000), nanbox_s(32'h3dcccccd), idx);
+      23: return make_req(FPU_FMT_S, FPU_RM_RNE,
+                          nanbox_s(32'h3f80_0000), nanbox_s(32'h3f19999a), idx);
+      24: return make_req(FPU_FMT_S, FPU_RM_RNE,
+                          nanbox_s(32'h3f80_0000), nanbox_s(32'h3f8ccccd), idx);
+      25: return make_req(FPU_FMT_S, FPU_RM_RNE,
+                          nanbox_s(32'h3f80_0000), nanbox_s(32'h3fcccccd), idx);
+      26: return make_req(FPU_FMT_S, FPU_RM_RNE,
+                          nanbox_s(32'h3f80_0000), nanbox_s(32'h40066666), idx);
+      27: return make_req(FPU_FMT_S, FPU_RM_RNE,
+                          nanbox_s(32'h3f80_0000), nanbox_s(32'h40266666), idx);
+      28: return make_req(FPU_FMT_S, FPU_RM_RNE,
+                          nanbox_s(32'h3f80_0000), nanbox_s(32'h40466666), idx);
+      29: return make_req(FPU_FMT_S, FPU_RM_RNE,
+                          nanbox_s(32'h3f80_0000), nanbox_s(32'h40666666), idx);
+      30: return make_req(FPU_FMT_S, FPU_RM_RNE,
+                          nanbox_s(32'h3f80_0000), nanbox_s(32'h40833333), idx);
+      31: return make_req(FPU_FMT_S, FPU_RM_RNE,
+                          nanbox_s(32'h3f80_0000), nanbox_s(32'h40933333), idx);
+      32: return make_req(FPU_FMT_S, FPU_RM_RNE,
+                          nanbox_s(32'h3f80_0000), nanbox_s(32'h40a33333), idx);
+      33: return make_req(FPU_FMT_S, FPU_RM_RNE,
+                          nanbox_s(32'h3f80_0000), nanbox_s(32'h40b33333), idx);
+      34: return make_req(FPU_FMT_S, FPU_RM_RNE,
+                          nanbox_s(32'h3f80_0000), nanbox_s(32'h40c33333), idx);
+      35: return make_req(FPU_FMT_S, FPU_RM_RNE,
+                          nanbox_s(32'h3f80_0000), nanbox_s(32'h40d33333), idx);
+      36: return make_req(FPU_FMT_S, FPU_RM_RNE,
+                          nanbox_s(32'h3f80_0000), nanbox_s(32'h40e33333), idx);
+      37: return make_req(FPU_FMT_S, FPU_RM_RNE,
+                          nanbox_s(32'h3f80_0000), nanbox_s(32'h40f33333), idx);
+      38: return make_req(FPU_FMT_S, FPU_RM_RNE,
+                          nanbox_s(32'h3f80_0000), nanbox_s(32'h4101999a), idx);
+      39: return make_req(FPU_FMT_S, FPU_RM_RNE,
+                          nanbox_s(32'h3f80_0000), nanbox_s(32'h4109999a), idx);
+      40: return make_req(FPU_FMT_S, FPU_RM_RNE,
+                          nanbox_s(32'h3f80_0000), nanbox_s(32'h4111999a), idx);
+      41: return make_req(FPU_FMT_S, FPU_RM_RNE,
+                          nanbox_s(32'h3f80_0000), nanbox_s(32'h4119999a), idx);
+      42: return make_req(FPU_FMT_S, FPU_RM_RNE,
+                          nanbox_s(32'h3f80_0000), nanbox_s(32'h41200000), idx);
       default: return make_req(FPU_FMT_D, FPU_RM_RNE,
                                case_data_a(idx),
                                case_data_b(idx),
@@ -180,6 +237,27 @@ module tb_fpu_div_pipe;
       18: return 64'h7fef_ffff_ffff_ffff;         // max finite / 1.0
       19: return 64'h0008_0000_0000_0000;         // min normal / 2.0
       20: return 64'h7fd0_0000_0000_0000;         // 1.0 / min normal
+      22: return nanbox_s(32'h4120_0000);         // 1.0f / 0.1f
+      23: return nanbox_s(32'h3fd5_5555);         // 1.0f / 0.6f
+      24: return nanbox_s(32'h3f68_ba2e);         // 1.0f / 1.1f
+      25: return nanbox_s(32'h3f20_0000);         // 1.0f / 1.6f
+      26: return nanbox_s(32'h3ef3_cf3e);         // 1.0f / 2.1f
+      27: return nanbox_s(32'h3ec4_ec4f);         // 1.0f / 2.6f
+      28: return nanbox_s(32'h3ea5_294b);         // 1.0f / 3.1f
+      29: return nanbox_s(32'h3e8e_38e4);         // 1.0f / 3.6f
+      30: return nanbox_s(32'h3e79_c190);         // 1.0f / 4.1f
+      31: return nanbox_s(32'h3e5e_9bd4);         // 1.0f / 4.6f
+      32: return nanbox_s(32'h3e48_c8c9);         // 1.0f / 5.1f
+      33: return nanbox_s(32'h3e36_db6e);         // 1.0f / 5.6f
+      34: return nanbox_s(32'h3e27_de6d);         // 1.0f / 6.1f
+      35: return nanbox_s(32'h3e1b_26ca);         // 1.0f / 6.6f
+      36: return nanbox_s(32'h3e10_39b1);         // 1.0f / 7.1f
+      37: return nanbox_s(32'h3e06_bca2);         // 1.0f / 7.6f
+      38: return nanbox_s(32'h3dfc_d6e9);         // 1.0f / 8.1f
+      39: return nanbox_s(32'h3dee_23b8);         // 1.0f / 8.6f
+      40: return nanbox_s(32'h3de1_0e10);         // 1.0f / 9.1f
+      41: return nanbox_s(32'h3dd5_5555);         // 1.0f / 9.6f
+      42: return nanbox_s(32'h3dcc_cccd);         // 1.0f / 10.0f
       default: return 64'h7ff0_0000_0000_0000;    // overflow
     endcase
   endfunction
@@ -194,6 +272,11 @@ module tb_fpu_div_pipe;
       17:       flags[FPU_FFLAG_NX] = 1'b1;
       21: begin
         flags[FPU_FFLAG_OF] = 1'b1;
+        flags[FPU_FFLAG_NX] = 1'b1;
+      end
+      22, 23, 24, 25, 26, 27, 28,
+      29, 30, 31, 32, 33, 34, 35,
+      36, 37, 38, 39, 40, 41, 42: begin
         flags[FPU_FFLAG_NX] = 1'b1;
       end
       default: begin end
@@ -366,6 +449,47 @@ module tb_fpu_div_pipe;
   always @(posedge clk_i) begin
     if (rst_ni) begin
       cycle_cnt++;
+    end
+  end
+
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+      trace_accept_tag     <= 8'd0;
+      trace_result_tag     <= 8'd0;
+      trace_accept_s_src_a <= 32'd0;
+      trace_accept_s_src_b <= 32'd0;
+      trace_result_s       <= 32'd0;
+      trace_accept_d_src_a <= 64'd0;
+      trace_accept_d_src_b <= 64'd0;
+      trace_result_d       <= 64'd0;
+
+      for (int tag_idx = 0; tag_idx < 256; tag_idx++) begin
+        trace_src_a_by_tag[tag_idx]  <= '0;
+        trace_src_b_by_tag[tag_idx]  <= '0;
+        trace_result_by_tag[tag_idx] <= '0;
+        trace_fmt_by_tag[tag_idx]    <= FPU_FMT_S;
+        trace_fflags_by_tag[tag_idx] <= '0;
+      end
+    end else begin
+      if (valid_i && ready_o) begin
+        trace_accept_tag     <= req_i.tag;
+        trace_accept_s_src_a <= req_i.src_a[31:0];
+        trace_accept_s_src_b <= req_i.src_b[31:0];
+        trace_accept_d_src_a <= req_i.src_a;
+        trace_accept_d_src_b <= req_i.src_b;
+
+        trace_src_a_by_tag[req_i.tag] <= req_i.src_a;
+        trace_src_b_by_tag[req_i.tag] <= req_i.src_b;
+        trace_fmt_by_tag[req_i.tag]   <= req_i.rs_fmt;
+      end
+
+      if (valid_o) begin
+        trace_result_tag                <= resp_o.tag;
+        trace_result_s                  <= resp_o.result[31:0];
+        trace_result_d                  <= resp_o.result;
+        trace_result_by_tag[resp_o.tag] <= resp_o.result;
+        trace_fflags_by_tag[resp_o.tag] <= resp_o.fflags;
+      end
     end
   end
 
