@@ -4,7 +4,7 @@
 
 TB_DIR := sim/tb
 
-.PHONY: all compile run verdi verdi_sch clean rerun lop recip_seed_lut mult_trig mult_trig_verdi mult_trig_rerun convert convert_pipe convert_verdi convert_rerun add add_pipe add_verdi add_rerun mult mult_pipe mult_pipe_common mult_verdi mult_rerun fma fma_verdi fma_rerun sgnj sgnj_verdi sgnj_rerun compare compare_pipe compare_verdi compare_rerun tree
+.PHONY: all compile run verdi verdi_sch clean rerun lop recip_seed_lut mult_trig mult_trig_verdi mult_trig_rerun convert convert_pipe convert_verdi convert_rerun add add_pipe add_verdi add_rerun mult mult_pipe mult_pipe_common mult_verdi mult_rerun fma fma_pipe fma_verdi fma_rerun sgnj sgnj_verdi sgnj_rerun compare compare_pipe compare_verdi compare_rerun tree
 
 all:
 	$(MAKE) -C $(TB_DIR) all
@@ -83,6 +83,9 @@ mult_rerun:
 
 fma:
 	$(MAKE) -C $(TB_DIR) fma
+
+fma_pipe:
+	$(MAKE) -C $(TB_DIR) fma_pipe
 
 fma_verdi:
 	$(MAKE) -C $(TB_DIR) fma_verdi

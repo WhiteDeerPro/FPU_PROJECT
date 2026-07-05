@@ -162,6 +162,12 @@ Current pipe RTL lives under `rtl/units_pipe/`.
   packing, and special-case muxing in the final stage. The base exponent
   `lhs.exp + rhs.exp - bias - 104` is computed in stage 0 and carried as
   sideband; the final stage only adds `product_lop_pos`.
+- `fpu_fma_unit_pipe`: 6 combinational stages with five cycle latency. Stage 0
+  unpacks and launches the shared `fpu_mult_pipe`; stages 1-2 are the internal
+  multiplier reduction/final product path; stage 3 computes product/addend
+  leading-one positions and accumulator exponent anchors; stage 4 aligns into
+  the 160-bit accumulator and add/subtracts; stage 5 normalizes, handles
+  subnormal shift/jam, rounds, packs, and applies the special-case mux.
 - `fpu_compare_unit_pipe`: 2 stages. Stage 0 unpacks/classifies and computes
   compare predicates; stage 1 selects compare/min/max/class result and flags.
 - `fpu_convert_unit_pipe`: 2-cycle conversion pipe with I2F, F2F, and F2I

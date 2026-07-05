@@ -24,6 +24,7 @@ rtl/units/fpu_compare_unit.sv
 rtl/units_pipe/fpu_add_unit_pipe.sv
 rtl/units_pipe/fpu_convert_unit_pipe.sv
 rtl/units_pipe/fpu_mult_unit_pipe.sv
+rtl/units_pipe/fpu_fma_unit_pipe.sv
 rtl/units_pipe/fpu_compare_unit_pipe.sv
 
 // Future modules:
