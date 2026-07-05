@@ -168,6 +168,11 @@ Current pipe RTL lives under `rtl/units_pipe/`.
   leading-one positions and accumulator exponent anchors; stage 4 aligns into
   the 160-bit accumulator and add/subtracts; stage 5 normalizes, handles
   subnormal shift/jam, rounds, packs, and applies the special-case mux.
+- `fpu_div_unit_pipe`: serial FDIV micro-sequence with a private
+  `fpu_fma_unit_pipe` and `fpu_recip_seed_lut`. It accepts a new finite divide
+  only while idle: seed the reciprocal, run Newton-Raphson refinement, compute
+  `q0 = a*x`, form `r = a - b*q0`, and finish with `q = q0 + r*x`. Special
+  cases are handled before the FMA sequence.
 - `fpu_compare_unit_pipe`: 2 stages. Stage 0 unpacks/classifies and computes
   compare predicates; stage 1 selects compare/min/max/class result and flags.
 - `fpu_convert_unit_pipe`: 2-cycle conversion pipe with I2F, F2F, and F2I
