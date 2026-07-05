@@ -3,13 +3,14 @@
 module tb_fpu_div_pipe;
   import fpu_pkg::*;
 
-  localparam int unsigned NUM_CASES = 18;
-  localparam int unsigned TIMEOUT_CYCLES = 160;
+  localparam int unsigned NUM_CASES = 22;
+  localparam int unsigned TIMEOUT_CYCLES = 260;
 
   logic      clk_i;
   logic      rst_ni;
   logic      valid_i;
   fpu_req_t  req_i;
+  logic      ready_o;
   logic      valid_o;
   fpu_resp_t resp_o;
   logic      valid_op_o;
@@ -23,6 +24,7 @@ module tb_fpu_div_pipe;
     .rst_ni    (rst_ni),
     .valid_i   (valid_i),
     .req_i     (req_i),
+    .ready_o   (ready_o),
     .valid_o   (valid_o),
     .resp_o    (resp_o),
     .valid_op_o(valid_op_o)
@@ -129,9 +131,29 @@ module tb_fpu_div_pipe;
         return req;
       end
       default: return make_req(FPU_FMT_D, FPU_RM_RNE,
-                               64'h4024_0000_0000_0000,  // 10.0
-                               64'h4008_0000_0000_0000,  // 3.0
+                               case_data_a(idx),
+                               case_data_b(idx),
                                idx);
+    endcase
+  endfunction
+
+  function automatic fpu_data_t case_data_a(input int unsigned idx);
+    unique case (idx)
+      17: return 64'h4024_0000_0000_0000; // 10.0
+      18: return 64'h7fef_ffff_ffff_ffff; // max finite
+      19: return 64'h0010_0000_0000_0000; // min normal
+      20: return 64'h3ff0_0000_0000_0000; // 1.0
+      default: return 64'h7fef_ffff_ffff_ffff; // max finite
+    endcase
+  endfunction
+
+  function automatic fpu_data_t case_data_b(input int unsigned idx);
+    unique case (idx)
+      17: return 64'h4008_0000_0000_0000; // 3.0
+      18: return 64'h3ff0_0000_0000_0000; // 1.0
+      19: return 64'h4000_0000_0000_0000; // 2.0
+      20: return 64'h0010_0000_0000_0000; // min normal
+      default: return 64'h0010_0000_0000_0000; // min normal
     endcase
   endfunction
 
@@ -154,7 +176,11 @@ module tb_fpu_div_pipe;
       14: return nanbox_s(32'h7f80_0000);         // +inf, DZ
       15: return nanbox_s(32'h0000_0000);         // +0
       16: return 64'd0;                           // invalid op
-      default: return 64'h400a_aaaa_aaaa_aaab;    // 10.0 / 3.0
+      17: return 64'h400a_aaaa_aaaa_aaab;         // 10.0 / 3.0
+      18: return 64'h7fef_ffff_ffff_ffff;         // max finite / 1.0
+      19: return 64'h0008_0000_0000_0000;         // min normal / 2.0
+      20: return 64'h7fd0_0000_0000_0000;         // 1.0 / min normal
+      default: return 64'h7ff0_0000_0000_0000;    // overflow
     endcase
   endfunction
 
@@ -166,6 +192,10 @@ module tb_fpu_div_pipe;
       7, 14: flags[FPU_FFLAG_DZ] = 1'b1;
       8, 9, 13: flags[FPU_FFLAG_NV] = 1'b1;
       17:       flags[FPU_FFLAG_NX] = 1'b1;
+      21: begin
+        flags[FPU_FFLAG_OF] = 1'b1;
+        flags[FPU_FFLAG_NX] = 1'b1;
+      end
       default: begin end
     endcase
 
@@ -188,6 +218,11 @@ module tb_fpu_div_pipe;
     exp_fflags   = expected_fflags(idx);
     exp_valid_op = expected_valid_op(idx);
     waited       = 0;
+
+    while (!ready_o) begin
+      @(posedge clk_i);
+      #1;
+    end
 
     @(posedge clk_i);
     #1;
@@ -221,6 +256,94 @@ module tb_fpu_div_pipe;
                exp_fflags, resp_o.fflags,
                req.tag, resp_o.tag,
                req.rd, resp_o.rd);
+      fail_cnt++;
+    end
+  endtask
+
+  task automatic check_burst_output(
+    inout logic [5:0] seen,
+    inout int unsigned got
+  );
+    int unsigned idx;
+    fpu_data_t   exp_result;
+    fpu_fflags_t exp_fflags;
+
+    if (valid_o) begin
+      if (resp_o.tag < 8'h80 || resp_o.tag >= 8'h86) begin
+        $display("[FAIL] burst unexpected tag=0x%02h", resp_o.tag);
+        fail_cnt++;
+      end else begin
+        idx = resp_o.tag - 8'h80;
+        if (seen[idx]) begin
+          $display("[FAIL] burst duplicate tag=0x%02h", resp_o.tag);
+          fail_cnt++;
+        end else begin
+          exp_result = expected_result(idx);
+          exp_fflags = expected_fflags(idx);
+          if ((valid_op_o === 1'b1) &&
+              (resp_o.result === exp_result) &&
+              (resp_o.fflags === exp_fflags) &&
+              (resp_o.rd === idx[4:0])) begin
+            seen[idx] = 1'b1;
+            got++;
+            pass_cnt++;
+          end else begin
+            $display("[FAIL] burst idx=%0d valid_op=%0b result exp=0x%016h got=0x%016h fflags exp=0x%02h got=0x%02h rd exp=%0d got=%0d",
+                     idx, valid_op_o, exp_result, resp_o.result,
+                     exp_fflags, resp_o.fflags, idx[4:0], resp_o.rd);
+            fail_cnt++;
+          end
+        end
+      end
+    end
+  endtask
+
+  task automatic run_burst6;
+    fpu_req_t    reqs [6];
+    logic [5:0]  seen;
+    int unsigned sent;
+    int unsigned got;
+    int unsigned waited;
+
+    seen   = 6'd0;
+    sent   = 0;
+    got    = 0;
+    waited = 0;
+
+    for (int unsigned idx = 0; idx < 6; idx++) begin
+      reqs[idx]     = case_req(idx);
+      reqs[idx].tag = 8'h80 + idx[7:0];
+      reqs[idx].rd  = idx[4:0];
+    end
+
+    while (sent < 6) begin
+      @(posedge clk_i);
+      #1;
+      check_burst_output(seen, got);
+      if (ready_o) begin
+        valid_i = 1'b1;
+        req_i   = reqs[sent];
+        sent++;
+      end else begin
+        valid_i = 1'b0;
+        req_i   = '0;
+      end
+    end
+
+    @(posedge clk_i);
+    #1;
+    valid_i = 1'b0;
+    req_i   = '0;
+
+    while (got < 6 && waited < TIMEOUT_CYCLES) begin
+      check_burst_output(seen, got);
+      @(posedge clk_i);
+      #1;
+      waited++;
+    end
+
+    if (got != 6) begin
+      $display("[FAIL] burst got=%0d expected=6 seen=0x%02h", got, seen);
       fail_cnt++;
     end
   endtask
@@ -261,6 +384,8 @@ module tb_fpu_div_pipe;
     for (int unsigned idx = 0; idx < NUM_CASES; idx++) begin
       run_case(idx);
     end
+
+    run_burst6();
 
     repeat (4) @(posedge clk_i);
 

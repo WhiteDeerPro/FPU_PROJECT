@@ -168,11 +168,14 @@ Current pipe RTL lives under `rtl/units_pipe/`.
   leading-one positions and accumulator exponent anchors; stage 4 aligns into
   the 160-bit accumulator and add/subtracts; stage 5 normalizes, handles
   subnormal shift/jam, rounds, packs, and applies the special-case mux.
-- `fpu_div_unit_pipe`: serial FDIV micro-sequence with a private
-  `fpu_fma_unit_pipe` and `fpu_recip_seed_lut`. It accepts a new finite divide
-  only while idle: seed the reciprocal, run Newton-Raphson refinement, compute
-  `q0 = a*x`, form `r = a - b*q0`, and finish with `q = q0 + r*x`. Special
-  cases are handled before the FMA sequence.
+- `fpu_div_unit_pipe`: 6-context interleaved FDIV pipe with a private
+  `fpu_fma_unit_pipe` and `fpu_recip_seed_lut`. `ready_o` indicates whether a
+  context slot is free. Finite divides work in normalized mantissa space rather
+  than constructing a full IEEE `1/b`: seed `1/mb`, run Newton-Raphson
+  refinement, compute `q0 = ma*x`, form `r = ma - mb*q0`, finish with
+  `q = q0 + r*x`, then apply `exp(a)-exp(b)` while packing the final result.
+  This keeps reciprocal/FMA intermediates near [0.5, 2) and defers true
+  overflow/underflow handling to final result packing.
 - `fpu_compare_unit_pipe`: 2 stages. Stage 0 unpacks/classifies and computes
   compare predicates; stage 1 selects compare/min/max/class result and flags.
 - `fpu_convert_unit_pipe`: 2-cycle conversion pipe with I2F, F2F, and F2I

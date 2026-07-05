@@ -1,19 +1,22 @@
 //============================================================================
-// Pipelined divide unit built from a reciprocal seed and a private FMA pipe.
+// Interleaved divide unit built from a reciprocal seed and one private FMA pipe.
 //
-// This first divide pipe is a fixed micro-sequence, not a throughput-1 pipe:
-// it accepts a new finite FDIV only while idle. The surrounding scheduler must
-// not assert another valid FDIV while this unit is busy.
+// The unit keeps six in-flight divide contexts, enough to keep the current
+// five-cycle FMA pipe busy with one micro-op per cycle after warm-up. `ready_o`
+// is high when a context slot is free; requests asserted while `ready_o` is low
+// are ignored by this unit and must be held by the caller.
 //
-// Finite path:
-//   x0 = recip_seed(abs(b))
-//   e  = 1.0 - abs(b) * x
-//   x' = x + x * e
-//   S-format: two Newton-Raphson rounds, then a * signed(x)
-//   D-format: four Newton-Raphson rounds, then a * signed(x)
-//   q0 = a * signed(x)
-//   r  = a - b * q0
-//   q  = q0 + r * signed(x)
+// Finite path is computed in mantissa space to avoid constructing a full
+// IEEE-754 1/b intermediate:
+//   ma = normalized significand(a) in [1, 2)
+//   mb = normalized significand(b) in [1, 2)
+//   x0 = recip_seed(mb)
+//   e  = 1.0 - mb*x
+//   x' = x + x*e
+//   q0 = signed(ma)*signed(x)
+//   r  = signed(ma) - signed(mb)*q0
+//   q  = q0 + r*signed(x)
+//   result_exp = exponent(a) - exponent(b) + exponent(q)
 //============================================================================
 
 module fpu_div_unit_pipe
@@ -23,47 +26,66 @@ module fpu_div_unit_pipe
   input  logic      rst_ni,
   input  logic      valid_i,
   input  fpu_req_t  req_i,
+  output logic      ready_o,
   output logic      valid_o,
   output fpu_resp_t resp_o,
   output logic      valid_op_o
 );
 
-  localparam int signed S_EXP_BIAS = 127;
-  localparam int signed D_EXP_BIAS = 1023;
+  localparam int unsigned NUM_CTX     = 6;
+  localparam int unsigned FMA_LATENCY = 5;
+  localparam int signed   S_EXP_BIAS  = 127;
+  localparam int signed   D_EXP_BIAS  = 1023;
 
   typedef enum logic [2:0] {
-    ST_IDLE,
-    ST_WAIT_E,
-    ST_WAIT_X,
-    ST_WAIT_Q,
-    ST_WAIT_R,
-    ST_WAIT_FINAL
-  } state_e;
+    MICRO_E,
+    MICRO_X,
+    MICRO_Q,
+    MICRO_R,
+    MICRO_FINAL
+  } micro_op_e;
 
   typedef struct packed {
-    logic             sign;
-    logic             is_zero;
-    logic             is_inf;
-    logic             is_nan;
-    logic             is_snan;
-    logic [11:0]      sig_hi;
+    logic               sign;
+    logic               is_zero;
+    logic               is_inf;
+    logic               is_nan;
+    logic               is_snan;
+    logic [11:0]        sig_hi;
+    logic [52:0]        sig_norm;
     logic signed [15:0] unbiased_exp;
   } fp_div_operand_t;
 
-  state_e     state_q;
-  fpu_req_t   req_q;
-  fpu_data_t  b_abs_q;
-  fpu_data_t  x_q;
-  fpu_data_t  q_q;
-  logic       b_sign_q;
-  logic [2:0] iter_q;
-  logic [2:0] iter_limit_q;
+  logic [NUM_CTX-1:0] ctx_active;
+  logic [NUM_CTX-1:0] ctx_ready;
+  logic [NUM_CTX-1:0] ctx_done;
+  logic [NUM_CTX-1:0] ctx_valid_op;
+
+  micro_op_e          ctx_step       [NUM_CTX];
+  fpu_req_t           ctx_req        [NUM_CTX];
+  fpu_data_t          ctx_a_mant     [NUM_CTX];
+  fpu_data_t          ctx_b_mant_abs [NUM_CTX];
+  fpu_data_t          ctx_b_mant     [NUM_CTX];
+  fpu_data_t          ctx_x          [NUM_CTX];
+  fpu_data_t          ctx_e          [NUM_CTX];
+  fpu_data_t          ctx_q          [NUM_CTX];
+  fpu_data_t          ctx_r          [NUM_CTX];
+  fpu_resp_t          ctx_resp       [NUM_CTX];
+  logic signed [15:0] ctx_exp_delta  [NUM_CTX];
+  logic [2:0]         ctx_iter       [NUM_CTX];
+  logic [2:0]         ctx_iter_limit [NUM_CTX];
 
   fpu_req_t  fma_req_q;
   logic      fma_valid_q;
+  logic [2:0] fma_ctx_q;
+  micro_op_e fma_kind_q;
   logic      fma_valid_o;
   fpu_resp_t fma_resp_o;
   logic      fma_valid_op_o;
+
+  logic      ret_valid_pipe [FMA_LATENCY];
+  logic [2:0] ret_ctx_pipe  [FMA_LATENCY];
+  micro_op_e ret_kind_pipe  [FMA_LATENCY];
 
   fpu_resp_t resp_q;
   logic      valid_q;
@@ -78,17 +100,28 @@ module fpu_div_unit_pipe
   logic            special_valid_op;
   fpu_resp_t       special_resp;
 
-  logic [11:0]             lut_sig_hi;
-  logic signed [15:0]      lut_exp;
-  logic [15:0]             seed_mant;
-  logic signed [15:0]      seed_exp;
-  logic [15:0]             seed_norm_mant;
-  logic signed [15:0]      seed_norm_exp;
-  fpu_data_t               seed_data;
+  logic [11:0]        lut_sig_hi;
+  logic [15:0]        seed_mant;
+  logic signed [15:0] seed_exp;
+  logic [15:0]        seed_norm_mant;
+  logic signed [15:0] seed_norm_exp;
+  fpu_data_t          seed_data;
+
+  logic       free_valid;
+  logic [2:0] free_idx;
+  logic       issue_valid;
+  logic [2:0] issue_ctx;
+  fpu_req_t   issue_req;
+  micro_op_e  issue_kind;
+  logic       done_valid;
+  logic [2:0] done_ctx;
+  logic       accept_req;
 
   assign valid_o    = valid_q;
   assign resp_o     = resp_q;
   assign valid_op_o = valid_op_q;
+  assign ready_o    = free_valid;
+  assign accept_req = valid_i && free_valid;
 
   fpu_fma_unit_pipe u_fma_pipe (
     .clk_i     (clk_i),
@@ -102,7 +135,7 @@ module fpu_div_unit_pipe
 
   fpu_recip_seed_lut u_seed_lut (
     .sig_hi_i        (lut_sig_hi),
-    .exp_i           (lut_exp),
+    .exp_i           (16'sd0),
     .mant_seed_o     (seed_mant),
     .exp_seed_o      (seed_exp),
     .norm_mant_seed_o(seed_norm_mant),
@@ -202,7 +235,8 @@ module fpu_div_unit_pipe
       end
     end
 
-    op.sig_hi = sig_norm[52:41];
+    op.sig_norm = sig_norm;
+    op.sig_hi   = sig_norm[52:41];
     return op;
   endfunction
 
@@ -230,6 +264,33 @@ module fpu_div_unit_pipe
     return {sign, 63'd0};
   endfunction
 
+  function automatic fpu_data_t pack_max_finite(
+    input fpu_fmt_e fmt,
+    input logic     sign
+  );
+    if (fmt == FPU_FMT_S) begin
+      return nanbox_s({sign, 8'hfe, 23'h7f_ffff});
+    end
+
+    return {sign, 11'h7fe, 52'hf_ffff_ffff_ffff};
+  endfunction
+
+  function automatic fpu_data_t pack_overflow_result(
+    input fpu_fmt_e fmt,
+    input logic     sign,
+    input fpu_rm_e  rm
+  );
+    fpu_rm_e rm_eff;
+    logic    to_inf;
+
+    rm_eff = effective_rm(rm);
+    to_inf = (rm_eff == FPU_RM_RNE) ||
+             (rm_eff == FPU_RM_RMM) ||
+             ((rm_eff == FPU_RM_RUP) && !sign) ||
+             ((rm_eff == FPU_RM_RDN) && sign);
+    return to_inf ? pack_inf(fmt, sign) : pack_max_finite(fmt, sign);
+  endfunction
+
   function automatic fpu_data_t pack_one(input fpu_fmt_e fmt);
     if (fmt == FPU_FMT_S) begin
       return nanbox_s(32'h3f80_0000);
@@ -238,20 +299,16 @@ module fpu_div_unit_pipe
     return 64'h3ff0_0000_0000_0000;
   endfunction
 
-  function automatic fpu_data_t abs_data(
-    input fpu_data_t data,
-    input fpu_fmt_e  fmt
+  function automatic fpu_data_t mantissa_data(
+    input fpu_fmt_e      fmt,
+    input logic [52:0]   sig_norm,
+    input logic          sign
   );
-    fpu_data_t out;
-
-    out = data;
     if (fmt == FPU_FMT_S) begin
-      out[31] = 1'b0;
-    end else begin
-      out[63] = 1'b0;
+      return nanbox_s({sign, 8'h7f, sig_norm[51:29]});
     end
 
-    return out;
+    return {sign, 11'h3ff, sig_norm[51:0]};
   endfunction
 
   function automatic fpu_data_t set_sign(
@@ -271,41 +328,192 @@ module fpu_div_unit_pipe
     return out;
   endfunction
 
-  function automatic fpu_data_t pack_seed(
-    input fpu_fmt_e             fmt,
-    input logic [15:0]          norm_mant,
-    input logic signed [15:0]   norm_exp
+  function automatic fpu_data_t pack_seed_mant(
+    input fpu_fmt_e           fmt,
+    input logic [15:0]        norm_mant,
+    input logic signed [15:0] norm_exp
   );
     logic signed [15:0] biased_exp;
-    logic [31:0]       bits_s;
-    logic [63:0]       bits_d;
 
     biased_exp = (fmt == FPU_FMT_S) ? (norm_exp + 16'sd127) :
                                       (norm_exp + 16'sd1023);
-    bits_s     = 32'd0;
-    bits_d     = 64'd0;
-
     if (fmt == FPU_FMT_S) begin
-      if (biased_exp >= 16'sd255) begin
-        bits_s = {1'b0, 8'hff, 23'd0};
-      end else if (biased_exp <= 16'sd0) begin
-        bits_s = 32'd0;
+      return nanbox_s({1'b0, biased_exp[7:0], norm_mant[14:0], 8'd0});
+    end
+
+    return {1'b0, biased_exp[10:0], norm_mant[14:0], 37'd0};
+  endfunction
+
+  function automatic logic round_inc(
+    input fpu_rm_e rm,
+    input logic    sign,
+    input logic    lsb,
+    input logic    guard,
+    input logic    round_bit,
+    input logic    sticky
+  );
+    logic any_tail;
+
+    any_tail = guard || round_bit || sticky;
+    unique case (effective_rm(rm))
+      FPU_RM_RNE: return guard && (round_bit || sticky || lsb);
+      FPU_RM_RTZ: return 1'b0;
+      FPU_RM_RDN: return sign && any_tail;
+      FPU_RM_RUP: return !sign && any_tail;
+      FPU_RM_RMM: return guard;
+      default:    return guard && (round_bit || sticky || lsb);
+    endcase
+  endfunction
+
+  function automatic fpu_resp_t scale_s_result(
+    input fpu_resp_t          mant_resp,
+    input logic signed [15:0] exp_delta,
+    input fpu_rm_e            rm
+  );
+    fpu_resp_t          out;
+    logic [31:0]        bits;
+    logic               sign;
+    logic signed [15:0] final_exp;
+    logic [23:0]        sig;
+    logic [63:0]        ext;
+    logic [63:0]        shifted;
+    logic               lost;
+    logic [23:0]        main_sig;
+    logic [24:0]        rounded;
+    logic               inexact;
+
+    out       = mant_resp;
+    bits      = mant_resp.result[31:0];
+    sign      = bits[31];
+    final_exp = $signed({8'd0, bits[30:23]}) + exp_delta;
+    sig       = {1'b1, bits[22:0]};
+    ext       = {37'd0, sig, 3'd0};
+    shifted   = 64'd0;
+    lost      = mant_resp.fflags[FPU_FFLAG_NX];
+    main_sig  = 24'd0;
+    rounded   = 25'd0;
+    inexact   = 1'b0;
+
+    if (bits[30:23] == 8'hff) begin
+      return mant_resp;
+    end
+
+    if (final_exp >= 16'sd255) begin
+      out.result = pack_overflow_result(FPU_FMT_S, sign, rm);
+      out.fflags[FPU_FFLAG_OF] = 1'b1;
+      out.fflags[FPU_FFLAG_NX] = 1'b1;
+    end else if (final_exp > 16'sd0) begin
+      out.result = nanbox_s({sign, final_exp[7:0], bits[22:0]});
+    end else begin
+      if ((16'sd1 - final_exp) >= 16'sd32) begin
+        lost = lost || (sig != 24'd0);
       end else begin
-        bits_s = {1'b0, biased_exp[7:0], norm_mant[14:0], 8'd0};
+        shifted = ext >> (16'sd1 - final_exp);
+        for (int bit_idx = 0; bit_idx < 64; bit_idx++) begin
+          if (bit_idx < (16'sd1 - final_exp)) begin
+            lost = lost || ext[bit_idx];
+          end
+        end
+        main_sig = shifted[26:3];
       end
 
-      return nanbox_s(bits_s);
+      inexact = shifted[2] || shifted[1] || shifted[0] || lost;
+      rounded = {1'b0, main_sig} +
+                {24'd0, round_inc(rm, sign, main_sig[0],
+                                   shifted[2], shifted[1],
+                                   shifted[0] || lost)};
+      if (rounded[24]) begin
+        out.result = nanbox_s({sign, 8'd1, 23'd0});
+      end else begin
+        out.result = nanbox_s({sign, 8'd0, rounded[22:0]});
+      end
+      out.fflags[FPU_FFLAG_NX] = out.fflags[FPU_FFLAG_NX] || inexact;
+      out.fflags[FPU_FFLAG_UF] = out.fflags[FPU_FFLAG_UF] || inexact;
     end
 
-    if (biased_exp >= 16'sd2047) begin
-      bits_d = {1'b0, 11'h7ff, 52'd0};
-    end else if (biased_exp <= 16'sd0) begin
-      bits_d = 64'd0;
+    return out;
+  endfunction
+
+  function automatic fpu_resp_t scale_d_result(
+    input fpu_resp_t          mant_resp,
+    input logic signed [15:0] exp_delta,
+    input fpu_rm_e            rm
+  );
+    fpu_resp_t          out;
+    logic [63:0]        bits;
+    logic               sign;
+    logic signed [15:0] final_exp;
+    logic [52:0]        sig;
+    logic [127:0]       ext;
+    logic [127:0]       shifted;
+    logic               lost;
+    logic [52:0]        main_sig;
+    logic [53:0]        rounded;
+    logic               inexact;
+
+    out       = mant_resp;
+    bits      = mant_resp.result;
+    sign      = bits[63];
+    final_exp = $signed({5'd0, bits[62:52]}) + exp_delta;
+    sig       = {1'b1, bits[51:0]};
+    ext       = {72'd0, sig, 3'd0};
+    shifted   = 128'd0;
+    lost      = mant_resp.fflags[FPU_FFLAG_NX];
+    main_sig  = 53'd0;
+    rounded   = 54'd0;
+    inexact   = 1'b0;
+
+    if (bits[62:52] == 11'h7ff) begin
+      return mant_resp;
+    end
+
+    if (final_exp >= 16'sd2047) begin
+      out.result = pack_overflow_result(FPU_FMT_D, sign, rm);
+      out.fflags[FPU_FFLAG_OF] = 1'b1;
+      out.fflags[FPU_FFLAG_NX] = 1'b1;
+    end else if (final_exp > 16'sd0) begin
+      out.result = {sign, final_exp[10:0], bits[51:0]};
     end else begin
-      bits_d = {1'b0, biased_exp[10:0], norm_mant[14:0], 37'd0};
+      if ((16'sd1 - final_exp) >= 16'sd61) begin
+        lost = lost || (sig != 53'd0);
+      end else begin
+        shifted = ext >> (16'sd1 - final_exp);
+        for (int bit_idx = 0; bit_idx < 128; bit_idx++) begin
+          if (bit_idx < (16'sd1 - final_exp)) begin
+            lost = lost || ext[bit_idx];
+          end
+        end
+        main_sig = shifted[55:3];
+      end
+
+      inexact = shifted[2] || shifted[1] || shifted[0] || lost;
+      rounded = {1'b0, main_sig} +
+                {53'd0, round_inc(rm, sign, main_sig[0],
+                                   shifted[2], shifted[1],
+                                   shifted[0] || lost)};
+      if (rounded[53]) begin
+        out.result = {sign, 11'd1, 52'd0};
+      end else begin
+        out.result = {sign, 11'd0, rounded[51:0]};
+      end
+      out.fflags[FPU_FFLAG_NX] = out.fflags[FPU_FFLAG_NX] || inexact;
+      out.fflags[FPU_FFLAG_UF] = out.fflags[FPU_FFLAG_UF] || inexact;
     end
 
-    return bits_d;
+    return out;
+  endfunction
+
+  function automatic fpu_resp_t scale_result(
+    input fpu_resp_t          mant_resp,
+    input fpu_fmt_e           fmt,
+    input logic signed [15:0] exp_delta,
+    input fpu_rm_e            rm
+  );
+    if (fmt == FPU_FMT_S) begin
+      return scale_s_result(mant_resp, exp_delta, rm);
+    end
+
+    return scale_d_result(mant_resp, exp_delta, rm);
   endfunction
 
   function automatic fpu_req_t make_fma_req(
@@ -334,10 +542,10 @@ module fpu_div_unit_pipe
   assign fmt_is_valid  = fmt_supported(req_i.rs_fmt) &&
                          (req_i.rs_fmt == req_i.dst_fmt);
   assign rm_is_valid_w = rm_is_supported(req_i.rm);
-
-  assign lut_sig_hi = rhs.sig_hi;
-  assign lut_exp    = rhs.unbiased_exp;
-  assign seed_data  = pack_seed(req_i.rs_fmt, seed_norm_mant, seed_norm_exp);
+  assign lut_sig_hi    = rhs.sig_hi;
+  assign seed_data     = pack_seed_mant(req_i.rs_fmt,
+                                        seed_norm_mant,
+                                        seed_norm_exp);
 
   always_comb begin
     special_resp          = '0;
@@ -368,133 +576,248 @@ module fpu_div_unit_pipe
     end
   end
 
+  always_comb begin
+    free_valid = 1'b0;
+    free_idx   = 3'd0;
+    for (int ctx_idx = 0; ctx_idx < NUM_CTX; ctx_idx++) begin
+      if (!free_valid && !ctx_active[ctx_idx]) begin
+        free_valid = 1'b1;
+        free_idx   = ctx_idx[2:0];
+      end
+    end
+  end
+
+  always_comb begin
+    done_valid = 1'b0;
+    done_ctx   = 3'd0;
+    for (int ctx_idx = 0; ctx_idx < NUM_CTX; ctx_idx++) begin
+      if (!done_valid && ctx_active[ctx_idx] && ctx_done[ctx_idx]) begin
+        done_valid = 1'b1;
+        done_ctx   = ctx_idx[2:0];
+      end
+    end
+  end
+
+  always_comb begin
+    issue_valid = 1'b0;
+    issue_ctx   = 3'd0;
+    issue_kind  = MICRO_E;
+    issue_req   = '0;
+
+    for (int ctx_idx = 0; ctx_idx < NUM_CTX; ctx_idx++) begin
+      if (!issue_valid &&
+          ctx_active[ctx_idx] &&
+          ctx_ready[ctx_idx] &&
+          !ctx_done[ctx_idx]) begin
+        issue_valid = 1'b1;
+        issue_ctx   = ctx_idx[2:0];
+        issue_kind  = ctx_step[ctx_idx];
+
+        unique case (ctx_step[ctx_idx])
+          MICRO_E: begin
+            issue_req = make_fma_req(ctx_req[ctx_idx],
+                                     FPU_OP_FNMSUB,
+                                     ctx_b_mant_abs[ctx_idx],
+                                     ctx_x[ctx_idx],
+                                     pack_one(ctx_req[ctx_idx].rs_fmt),
+                                     FPU_RM_RNE);
+          end
+
+          MICRO_X: begin
+            issue_req = make_fma_req(ctx_req[ctx_idx],
+                                     FPU_OP_FMADD,
+                                     ctx_x[ctx_idx],
+                                     ctx_e[ctx_idx],
+                                     ctx_x[ctx_idx],
+                                     FPU_RM_RNE);
+          end
+
+          MICRO_Q: begin
+            issue_req = make_fma_req(ctx_req[ctx_idx],
+                                     FPU_OP_FMADD,
+                                     ctx_a_mant[ctx_idx],
+                                     set_sign(ctx_x[ctx_idx],
+                                              ctx_req[ctx_idx].rs_fmt,
+                                              ctx_req[ctx_idx].src_b[63]),
+                                     pack_zero(ctx_req[ctx_idx].rs_fmt, 1'b0),
+                                     FPU_RM_RNE);
+            if (ctx_req[ctx_idx].rs_fmt == FPU_FMT_S) begin
+              issue_req.src_b = set_sign(ctx_x[ctx_idx],
+                                         ctx_req[ctx_idx].rs_fmt,
+                                         ctx_req[ctx_idx].src_b[31]);
+            end
+          end
+
+          MICRO_R: begin
+            issue_req = make_fma_req(ctx_req[ctx_idx],
+                                     FPU_OP_FNMSUB,
+                                     ctx_b_mant[ctx_idx],
+                                     ctx_q[ctx_idx],
+                                     ctx_a_mant[ctx_idx],
+                                     FPU_RM_RNE);
+          end
+
+          default: begin
+            issue_req = make_fma_req(ctx_req[ctx_idx],
+                                     FPU_OP_FMADD,
+                                     ctx_r[ctx_idx],
+                                     set_sign(ctx_x[ctx_idx],
+                                              ctx_req[ctx_idx].rs_fmt,
+                                              ctx_req[ctx_idx].src_b[63]),
+                                     ctx_q[ctx_idx],
+                                     effective_rm(ctx_req[ctx_idx].rm));
+            if (ctx_req[ctx_idx].rs_fmt == FPU_FMT_S) begin
+              issue_req.src_b = set_sign(ctx_x[ctx_idx],
+                                         ctx_req[ctx_idx].rs_fmt,
+                                         ctx_req[ctx_idx].src_b[31]);
+            end
+          end
+        endcase
+      end
+    end
+  end
+
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
-      state_q      <= ST_IDLE;
-      req_q        <= '0;
-      b_abs_q      <= '0;
-      x_q          <= '0;
-      q_q          <= '0;
-      b_sign_q     <= 1'b0;
-      iter_q       <= 3'd0;
-      iter_limit_q <= 3'd0;
+      ctx_active   <= '0;
+      ctx_ready    <= '0;
+      ctx_done     <= '0;
+      ctx_valid_op <= '0;
       fma_req_q    <= '0;
       fma_valid_q  <= 1'b0;
+      fma_ctx_q    <= 3'd0;
+      fma_kind_q   <= MICRO_E;
       resp_q       <= '0;
       valid_q      <= 1'b0;
       valid_op_q   <= 1'b0;
+
+      for (int ctx_idx = 0; ctx_idx < NUM_CTX; ctx_idx++) begin
+        ctx_step[ctx_idx]       <= MICRO_E;
+        ctx_req[ctx_idx]        <= '0;
+        ctx_a_mant[ctx_idx]     <= '0;
+        ctx_b_mant_abs[ctx_idx] <= '0;
+        ctx_b_mant[ctx_idx]     <= '0;
+        ctx_x[ctx_idx]          <= '0;
+        ctx_e[ctx_idx]          <= '0;
+        ctx_q[ctx_idx]          <= '0;
+        ctx_r[ctx_idx]          <= '0;
+        ctx_resp[ctx_idx]       <= '0;
+        ctx_exp_delta[ctx_idx]  <= 16'sd0;
+        ctx_iter[ctx_idx]       <= 3'd0;
+        ctx_iter_limit[ctx_idx] <= 3'd0;
+      end
+
+      for (int pipe_idx = 0; pipe_idx < FMA_LATENCY; pipe_idx++) begin
+        ret_valid_pipe[pipe_idx] <= 1'b0;
+        ret_ctx_pipe[pipe_idx]   <= 3'd0;
+        ret_kind_pipe[pipe_idx]  <= MICRO_E;
+      end
     end else begin
-      valid_q     <= 1'b0;
-      valid_op_q  <= 1'b0;
-      fma_valid_q <= 1'b0;
+      valid_q    <= 1'b0;
+      valid_op_q <= 1'b0;
 
-      unique case (state_q)
-        ST_IDLE: begin
-          if (valid_i) begin
-            if (!normal_finite_div) begin
-              resp_q      <= special_resp;
-              valid_q     <= 1'b1;
-              valid_op_q  <= special_valid_op;
+      ret_valid_pipe[0] <= fma_valid_q;
+      ret_ctx_pipe[0]   <= fma_ctx_q;
+      ret_kind_pipe[0]  <= fma_kind_q;
+      for (int pipe_idx = 1; pipe_idx < FMA_LATENCY; pipe_idx++) begin
+        ret_valid_pipe[pipe_idx] <= ret_valid_pipe[pipe_idx-1];
+        ret_ctx_pipe[pipe_idx]   <= ret_ctx_pipe[pipe_idx-1];
+        ret_kind_pipe[pipe_idx]  <= ret_kind_pipe[pipe_idx-1];
+      end
+
+      fma_valid_q <= issue_valid;
+      fma_req_q   <= issue_req;
+      fma_ctx_q   <= issue_ctx;
+      fma_kind_q  <= issue_kind;
+      if (issue_valid) begin
+        ctx_ready[issue_ctx] <= 1'b0;
+      end
+
+      if (fma_valid_o && ret_valid_pipe[FMA_LATENCY-1]) begin
+        unique case (ret_kind_pipe[FMA_LATENCY-1])
+          MICRO_E: begin
+            ctx_e[ret_ctx_pipe[FMA_LATENCY-1]]     <= fma_resp_o.result;
+            ctx_step[ret_ctx_pipe[FMA_LATENCY-1]]  <= MICRO_X;
+            ctx_ready[ret_ctx_pipe[FMA_LATENCY-1]] <= fma_valid_op_o;
+          end
+
+          MICRO_X: begin
+            ctx_x[ret_ctx_pipe[FMA_LATENCY-1]] <= fma_resp_o.result;
+            if ((ctx_iter[ret_ctx_pipe[FMA_LATENCY-1]] + 3'd1) >=
+                ctx_iter_limit[ret_ctx_pipe[FMA_LATENCY-1]]) begin
+              ctx_step[ret_ctx_pipe[FMA_LATENCY-1]] <= MICRO_Q;
             end else begin
-              req_q        <= req_i;
-              b_abs_q      <= abs_data(req_i.src_b, req_i.rs_fmt);
-              x_q          <= seed_data;
-              b_sign_q     <= rhs.sign;
-              iter_q       <= 3'd0;
-              iter_limit_q <= (req_i.rs_fmt == FPU_FMT_S) ? 3'd2 : 3'd4;
-              fma_req_q    <= make_fma_req(req_i,
-                                            FPU_OP_FNMSUB,
-                                            abs_data(req_i.src_b, req_i.rs_fmt),
-                                            seed_data,
-                                            pack_one(req_i.rs_fmt),
-                                            FPU_RM_RNE);
-              fma_valid_q  <= 1'b1;
-              state_q      <= ST_WAIT_E;
+              ctx_iter[ret_ctx_pipe[FMA_LATENCY-1]] <=
+                ctx_iter[ret_ctx_pipe[FMA_LATENCY-1]] + 3'd1;
+              ctx_step[ret_ctx_pipe[FMA_LATENCY-1]] <= MICRO_E;
             end
+            ctx_ready[ret_ctx_pipe[FMA_LATENCY-1]] <= fma_valid_op_o;
           end
-        end
 
-        ST_WAIT_E: begin
-          if (fma_valid_o) begin
-            fma_req_q   <= make_fma_req(req_q,
-                                        FPU_OP_FMADD,
-                                        x_q,
-                                        fma_resp_o.result,
-                                        x_q,
-                                        FPU_RM_RNE);
-            fma_valid_q <= 1'b1;
-            state_q     <= ST_WAIT_X;
+          MICRO_Q: begin
+            ctx_q[ret_ctx_pipe[FMA_LATENCY-1]]     <= fma_resp_o.result;
+            ctx_step[ret_ctx_pipe[FMA_LATENCY-1]]  <= MICRO_R;
+            ctx_ready[ret_ctx_pipe[FMA_LATENCY-1]] <= fma_valid_op_o;
           end
-        end
 
-        ST_WAIT_X: begin
-          if (fma_valid_o) begin
-            x_q <= fma_resp_o.result;
-            if ((iter_q + 3'd1) >= iter_limit_q) begin
-              fma_req_q   <= make_fma_req(req_q,
-                                          FPU_OP_FMADD,
-                                          req_q.src_a,
-                                          set_sign(fma_resp_o.result,
-                                                   req_q.rs_fmt,
-                                                   b_sign_q),
-                                          pack_zero(req_q.rs_fmt, 1'b0),
-                                          FPU_RM_RNE);
-              fma_valid_q <= 1'b1;
-              state_q     <= ST_WAIT_Q;
-            end else begin
-              iter_q      <= iter_q + 3'd1;
-              fma_req_q   <= make_fma_req(req_q,
-                                          FPU_OP_FNMSUB,
-                                          b_abs_q,
-                                          fma_resp_o.result,
-                                          pack_one(req_q.rs_fmt),
-                                          FPU_RM_RNE);
-              fma_valid_q <= 1'b1;
-              state_q     <= ST_WAIT_E;
-            end
+          MICRO_R: begin
+            ctx_r[ret_ctx_pipe[FMA_LATENCY-1]]     <= fma_resp_o.result;
+            ctx_step[ret_ctx_pipe[FMA_LATENCY-1]]  <= MICRO_FINAL;
+            ctx_ready[ret_ctx_pipe[FMA_LATENCY-1]] <= fma_valid_op_o;
           end
-        end
 
-        ST_WAIT_Q: begin
-          if (fma_valid_o) begin
-            q_q         <= fma_resp_o.result;
-            fma_req_q   <= make_fma_req(req_q,
-                                        FPU_OP_FNMSUB,
-                                        req_q.src_b,
-                                        fma_resp_o.result,
-                                        req_q.src_a,
-                                        FPU_RM_RNE);
-            fma_valid_q <= 1'b1;
-            state_q     <= ST_WAIT_R;
+          default: begin
+            ctx_resp[ret_ctx_pipe[FMA_LATENCY-1]] <=
+              scale_result(fma_resp_o,
+                           ctx_req[ret_ctx_pipe[FMA_LATENCY-1]].rs_fmt,
+                           ctx_exp_delta[ret_ctx_pipe[FMA_LATENCY-1]],
+                           ctx_req[ret_ctx_pipe[FMA_LATENCY-1]].rm);
+            ctx_done[ret_ctx_pipe[FMA_LATENCY-1]]   <= fma_valid_op_o;
+            ctx_ready[ret_ctx_pipe[FMA_LATENCY-1]]  <= 1'b0;
           end
-        end
+        endcase
+      end
 
-        ST_WAIT_R: begin
-          if (fma_valid_o) begin
-            fma_req_q   <= make_fma_req(req_q,
-                                        FPU_OP_FMADD,
-                                        fma_resp_o.result,
-                                        set_sign(x_q, req_q.rs_fmt, b_sign_q),
-                                        q_q,
-                                        effective_rm(req_q.rm));
-            fma_valid_q <= 1'b1;
-            state_q     <= ST_WAIT_FINAL;
-          end
-        end
+      if (done_valid) begin
+        resp_q               <= ctx_resp[done_ctx];
+        valid_q              <= 1'b1;
+        valid_op_q           <= ctx_valid_op[done_ctx];
+        ctx_active[done_ctx] <= 1'b0;
+        ctx_ready[done_ctx]  <= 1'b0;
+        ctx_done[done_ctx]   <= 1'b0;
+        ctx_valid_op[done_ctx] <= 1'b0;
+      end
 
-        ST_WAIT_FINAL: begin
-          if (fma_valid_o) begin
-            resp_q      <= fma_resp_o;
-            valid_q     <= 1'b1;
-            valid_op_q  <= fma_valid_op_o;
-            state_q     <= ST_IDLE;
-          end
-        end
+      if (accept_req) begin
+        ctx_active[free_idx] <= 1'b1;
+        ctx_req[free_idx]    <= req_i;
+        ctx_resp[free_idx]   <= special_resp;
+        ctx_done[free_idx]   <= !normal_finite_div;
+        ctx_valid_op[free_idx] <= special_valid_op;
+        ctx_ready[free_idx]  <= normal_finite_div;
+        ctx_step[free_idx]   <= MICRO_E;
 
-        default: begin
-          state_q <= ST_IDLE;
+        if (normal_finite_div) begin
+          ctx_a_mant[free_idx]     <= mantissa_data(req_i.rs_fmt,
+                                                     lhs.sig_norm,
+                                                     lhs.sign);
+          ctx_b_mant_abs[free_idx] <= mantissa_data(req_i.rs_fmt,
+                                                     rhs.sig_norm,
+                                                     1'b0);
+          ctx_b_mant[free_idx]     <= mantissa_data(req_i.rs_fmt,
+                                                     rhs.sig_norm,
+                                                     rhs.sign);
+          ctx_x[free_idx]          <= seed_data;
+          ctx_e[free_idx]          <= '0;
+          ctx_q[free_idx]          <= '0;
+          ctx_r[free_idx]          <= '0;
+          ctx_exp_delta[free_idx]  <= lhs.unbiased_exp - rhs.unbiased_exp;
+          ctx_iter[free_idx]       <= 3'd0;
+          ctx_iter_limit[free_idx] <= (req_i.rs_fmt == FPU_FMT_S) ? 3'd2 :
+                                                                     3'd4;
+          ctx_valid_op[free_idx]   <= 1'b1;
         end
-      endcase
+      end
     end
   end
 
