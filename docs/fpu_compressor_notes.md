@@ -146,13 +146,13 @@ roughly halves the number of rows while preserving the weighted sum. For a
 16-row example:
 
 ```text
-A1 + A2 + ... + A16 = X1 + X2
+A0 + A1 + ... + A15 = X0 + X1
 
 16 rows -> 8 rows -> 4 rows -> 2 rows
           level 0    level 1    level 2
 ```
 
-The final two rows `X1` and `X2` are then added by a normal carry-propagate
+The final two rows `X0` and `X1` are then added by a normal carry-propagate
 adder. This is the main picture to keep in mind for multiplier partial-product
 reduction: compressors do not finish the addition; they reshape many aligned
 rows into two aligned rows with the same numeric value.
@@ -163,8 +163,9 @@ flowchart LR
   classDef ctrl fill:#f8f8f8,stroke:#333,stroke-width:1.2px,stroke-dasharray:5 4,color:#111;
   classDef group fill:#fff,stroke:#111,stroke-width:1.6px,color:#111;
 
-  subgraph IN["Input partial-product rows"]
+  subgraph IN["16 input rows"]
     direction TB
+    A0["A0"]:::data
     A1["A1"]:::data
     A2["A2"]:::data
     A3["A3"]:::data
@@ -180,26 +181,42 @@ flowchart LR
     A13["A13"]:::data
     A14["A14"]:::data
     A15["A15"]:::data
-    A16["A16"]:::data
   end
   class IN group
 
-  L0["4-2 compressor level 0<br/>16 rows -> 8 rows"]:::data
-  L1["4-2 compressor level 1<br/>8 rows -> 4 rows"]:::data
-  L2["4-2 compressor level 2<br/>4 rows -> 2 rows"]:::data
-
-  subgraph OUT["Reduced rows"]
+  subgraph L0["level 0: 16 rows -> 8 rows"]
     direction TB
+    L0A["4-2"]:::data
+    L0B["4-2"]:::data
+    L0C["4-2"]:::data
+    L0D["4-2"]:::data
+  end
+  class L0 group
+
+  subgraph L1["level 1: 8 rows -> 4 rows"]
+    direction TB
+    L1A["4-2"]:::data
+    L1B["4-2"]:::data
+  end
+  class L1 group
+
+  subgraph L2["level 2: 4 rows -> 2 rows"]
+    direction TB
+    L2A["4-2"]:::data
+  end
+  class L2 group
+
+  subgraph OUT["2 reduced rows"]
+    direction TB
+    X0["X0"]:::data
     X1["X1"]:::data
-    X2["X2"]:::data
   end
   class OUT group
 
-  CPA["Final carry-propagate add<br/>X1 + X2"]:::data
-  EQ["X1 + X2 = A1 + A2 + ... + A16"]:::ctrl
+  EQ["Σ A0..A15 = X0 + X1"]:::ctrl
 
-  IN --> L0 --> L1 --> L2 --> OUT --> CPA
-  OUT -. weighted-sum preserved .-> EQ
+  IN --> L0 --> L1 --> L2 --> OUT
+  OUT -. weighted sum preserved .-> EQ
 ```
 
 Compact view:
@@ -209,18 +226,16 @@ flowchart LR
   classDef data fill:#fff,stroke:#111,stroke-width:1.5px,color:#111;
   classDef ctrl fill:#f8f8f8,stroke:#333,stroke-width:1.2px,stroke-dasharray:5 4,color:#111;
 
-  A["A1, A2, A3, ... , A16<br/>16 aligned rows"]:::data
+  A["A0, A1, A2, ... , A15<br/>16 aligned rows"]:::data
   L0["4-2<br/>level 0"]:::data
   B["8 rows"]:::data
   L1["4-2<br/>level 1"]:::data
   C["4 rows"]:::data
   L2["4-2<br/>level 2"]:::data
-  X["X1, X2<br/>2 rows"]:::data
-  CPA["CPA"]:::data
-  R["final sum"]:::data
-  EQ["X1 + X2 = sum(A1..A16)"]:::ctrl
+  X["X0, X1<br/>2 reduced rows"]:::data
+  EQ["X0 + X1 = Σ A0..A15"]:::ctrl
 
-  A --> L0 --> B --> L1 --> C --> L2 --> X --> CPA --> R
+  A --> L0 --> B --> L1 --> C --> L2 --> X
   X -.-> EQ
 ```
 
