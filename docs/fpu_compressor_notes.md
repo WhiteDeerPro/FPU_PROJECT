@@ -146,98 +146,112 @@ roughly halves the number of rows while preserving the weighted sum. For a
 16-row example:
 
 ```text
-A0 + A1 + ... + A15 = X0 + X1
+A0 + A1 + ... + A15 = B1 + B2
 
 16 rows -> 8 rows -> 4 rows -> 2 rows
           level 0    level 1    level 2
 ```
 
-The final two rows `X0` and `X1` are then added by a normal carry-propagate
+The final two rows `B1` and `B2` are then added by a normal carry-propagate
 adder. This is the main picture to keep in mind for multiplier partial-product
 reduction: compressors do not finish the addition; they reshape many aligned
 rows into two aligned rows with the same numeric value.
 
 ```mermaid
-flowchart TD
-  classDef data fill:#fff,stroke:#111,stroke-width:1.5px,color:#111;
-  classDef ctrl fill:#f8f8f8,stroke:#333,stroke-width:1.2px,stroke-dasharray:5 4,color:#111;
-  classDef group fill:#fff,stroke:#111,stroke-width:1.6px,color:#111;
+flowchart LR
+  classDef in fill:#fff,stroke:#111,stroke-width:1.2px,color:#111;
+  classDef comp fill:#f8f8f8,stroke:#111,stroke-width:1.6px,color:#111;
+  classDef out fill:#fff,stroke:#111,stroke-width:1.6px,color:#111;
+  classDef note fill:#f8f8f8,stroke:#333,stroke-width:1.2px,stroke-dasharray:5 4,color:#111;
 
-  subgraph IN["16 input rows"]
-    direction LR
-    A0["A0"]:::data
-    A1["A1"]:::data
-    A2["A2"]:::data
-    A3["A3"]:::data
-    A4["A4"]:::data
-    A5["A5"]:::data
-    A6["A6"]:::data
-    A7["A7"]:::data
-    A8["A8"]:::data
-    A9["A9"]:::data
-    A10["A10"]:::data
-    A11["A11"]:::data
-    A12["A12"]:::data
-    A13["A13"]:::data
-    A14["A14"]:::data
-    A15["A15"]:::data
+  subgraph IN["16 input rows / partial products"]
+    direction TB
+    A0["A0"]:::in
+    A1["A1"]:::in
+    A2["A2"]:::in
+    A3["A3"]:::in
+    A4["A4"]:::in
+    A5["A5"]:::in
+    A6["A6"]:::in
+    A7["A7"]:::in
+    A8["A8"]:::in
+    A9["A9"]:::in
+    A10["A10"]:::in
+    A11["A11"]:::in
+    A12["A12"]:::in
+    A13["A13"]:::in
+    A14["A14"]:::in
+    A15["A15"]:::in
   end
-  class IN group
 
-  subgraph L0["level 0: 16 rows -> 8 rows"]
-    direction LR
-    L0A["4-2"]:::data
-    L0B["4-2"]:::data
-    L0C["4-2"]:::data
-    L0D["4-2"]:::data
+  subgraph L1["Level 1: 16 rows -> 8 rows"]
+    direction TB
+    C0["4-2 compressor<br/>C0: A0..A3"]:::comp
+    C1["4-2 compressor<br/>C1: A4..A7"]:::comp
+    C2["4-2 compressor<br/>C2: A8..A11"]:::comp
+    C3["4-2 compressor<br/>C3: A12..A15"]:::comp
   end
-  class L0 group
 
-  subgraph L1["level 1: 8 rows -> 4 rows"]
-    direction LR
-    L1A["4-2"]:::data
-    L1B["4-2"]:::data
+  subgraph L2["Level 2: 8 rows -> 4 rows"]
+    direction TB
+    C4["4-2 compressor<br/>C4"]:::comp
+    C5["4-2 compressor<br/>C5"]:::comp
   end
-  class L1 group
 
-  subgraph L2["level 2: 4 rows -> 2 rows"]
-    direction LR
-    L2A["4-2"]:::data
+  subgraph L3["Level 3: 4 rows -> 2 rows"]
+    direction TB
+    C6["4-2 compressor<br/>C6"]:::comp
   end
-  class L2 group
 
-  subgraph OUT["2 reduced rows"]
-    direction LR
-    X0["X0"]:::data
-    X1["X1"]:::data
-  end
-  class OUT group
+  B1["B1: final sum row"]:::out
+  B2["B2: final carry row << 1"]:::out
+  EQ["Σ A0..A15 = B1 + B2"]:::note
 
-  EQ["Σ A0..A15 = X0 + X1"]:::ctrl
+  A0 --> C0
+  A1 --> C0
+  A2 --> C0
+  A3 --> C0
 
-  IN --> L0 --> L1 --> L2 --> OUT
-  OUT -. weighted sum preserved .-> EQ
+  A4 --> C1
+  A5 --> C1
+  A6 --> C1
+  A7 --> C1
+
+  A8 --> C2
+  A9 --> C2
+  A10 --> C2
+  A11 --> C2
+
+  A12 --> C3
+  A13 --> C3
+  A14 --> C3
+  A15 --> C3
+
+  C0 -->|"sum0"| C4
+  C0 -->|"carry0"| C4
+  C1 -->|"sum1"| C4
+  C1 -->|"carry1"| C4
+
+  C2 -->|"sum2"| C5
+  C2 -->|"carry2"| C5
+  C3 -->|"sum3"| C5
+  C3 -->|"carry3"| C5
+
+  C4 -->|"sum4"| C6
+  C4 -->|"carry4"| C6
+  C5 -->|"sum5"| C6
+  C5 -->|"carry5"| C6
+
+  C6 --> B1
+  C6 --> B2
+  B1 -.-> EQ
+  B2 -.-> EQ
 ```
 
-Compact view:
-
-```mermaid
-flowchart TD
-  classDef data fill:#fff,stroke:#111,stroke-width:1.5px,color:#111;
-  classDef ctrl fill:#f8f8f8,stroke:#333,stroke-width:1.2px,stroke-dasharray:5 4,color:#111;
-
-  A["A0, A1, A2, ... , A15<br/>16 aligned rows"]:::data
-  L0["4-2<br/>level 0"]:::data
-  B["8 rows"]:::data
-  L1["4-2<br/>level 1"]:::data
-  C["4 rows"]:::data
-  L2["4-2<br/>level 2"]:::data
-  X["X0, X1<br/>2 reduced rows"]:::data
-  EQ["X0 + X1 = Σ A0..A15"]:::ctrl
-
-  A --> L0 --> B --> L1 --> C --> L2 --> X
-  X -.-> EQ
-```
+Here `B1` is the final sum row and `B2` is the final carry row after its
+one-bit weight shift. A final carry-propagate adder can later compute
+`B1 + B2`, but the compressor tree itself is only responsible for preserving
+`sum(A0..A15)` while reducing sixteen rows to two rows.
 
 The code in `fpu_compressor_4_2` writes this directly as Boolean compressor
 logic rather than instantiating two `fpu_compressor_3_2` submodules. The shape
