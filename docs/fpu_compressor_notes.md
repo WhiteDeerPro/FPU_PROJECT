@@ -158,13 +158,13 @@ reduction: compressors do not finish the addition; they reshape many aligned
 rows into two aligned rows with the same numeric value.
 
 ```mermaid
-flowchart LR
+flowchart TD
   classDef data fill:#fff,stroke:#111,stroke-width:1.5px,color:#111;
   classDef ctrl fill:#f8f8f8,stroke:#333,stroke-width:1.2px,stroke-dasharray:5 4,color:#111;
   classDef group fill:#fff,stroke:#111,stroke-width:1.6px,color:#111;
 
   subgraph IN["16 input rows"]
-    direction TB
+    direction LR
     A0["A0"]:::data
     A1["A1"]:::data
     A2["A2"]:::data
@@ -185,7 +185,7 @@ flowchart LR
   class IN group
 
   subgraph L0["level 0: 16 rows -> 8 rows"]
-    direction TB
+    direction LR
     L0A["4-2"]:::data
     L0B["4-2"]:::data
     L0C["4-2"]:::data
@@ -194,20 +194,20 @@ flowchart LR
   class L0 group
 
   subgraph L1["level 1: 8 rows -> 4 rows"]
-    direction TB
+    direction LR
     L1A["4-2"]:::data
     L1B["4-2"]:::data
   end
   class L1 group
 
   subgraph L2["level 2: 4 rows -> 2 rows"]
-    direction TB
+    direction LR
     L2A["4-2"]:::data
   end
   class L2 group
 
   subgraph OUT["2 reduced rows"]
-    direction TB
+    direction LR
     X0["X0"]:::data
     X1["X1"]:::data
   end
@@ -222,7 +222,7 @@ flowchart LR
 Compact view:
 
 ```mermaid
-flowchart LR
+flowchart TD
   classDef data fill:#fff,stroke:#111,stroke-width:1.5px,color:#111;
   classDef ctrl fill:#f8f8f8,stroke:#333,stroke-width:1.2px,stroke-dasharray:5 4,color:#111;
 
