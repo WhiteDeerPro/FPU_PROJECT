@@ -11,6 +11,7 @@ csrc/
 *.vdb
 *.fsdb
 *.vcd
+sim/tb/*_cases.mem
 verdiLog/
 novas.*
 ucli.key

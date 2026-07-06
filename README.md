@@ -42,6 +42,10 @@ make clean
 The top-level Makefile delegates to `sim/tb/Makefile`.
 Simulation outputs are written under `sim/01`, keeping `sim/tb` source-only.
 
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE).
+
 ## VM workspace workflow
 
 Keep the VM project on a normal writable disk path, for example:

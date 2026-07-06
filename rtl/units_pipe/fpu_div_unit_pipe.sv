@@ -517,6 +517,24 @@ module fpu_div_unit_pipe
     return scale_d_result(mant_resp, exp_delta, rm);
   endfunction
 
+  function automatic fpu_rm_e final_fma_rm(
+    input fpu_req_t           req,
+    input fpu_data_t          q_data,
+    input logic signed [15:0] exp_delta
+  );
+    logic signed [15:0] q_exp;
+    logic signed [15:0] final_exp_est;
+
+    if (req.rs_fmt == FPU_FMT_S) begin
+      q_exp = $signed({8'd0, q_data[30:23]});
+    end else begin
+      q_exp = $signed({5'd0, q_data[62:52]});
+    end
+
+    final_exp_est = q_exp + exp_delta;
+    return (final_exp_est <= 16'sd0) ? FPU_RM_RTZ : effective_rm(req.rm);
+  endfunction
+
   function automatic fpu_req_t make_fma_req(
     input fpu_req_t   base_req,
     input fpu_op_e    op,
@@ -666,7 +684,10 @@ module fpu_div_unit_pipe
                                               ctx_req[ctx_idx].rs_fmt,
                                               ctx_req[ctx_idx].src_b[63]),
                                      ctx_q[ctx_idx],
-                                     effective_rm(ctx_req[ctx_idx].rm));
+                                     final_fma_rm(
+                                       ctx_req[ctx_idx],
+                                       ctx_q[ctx_idx],
+                                       ctx_exp_delta[ctx_idx]));
             if (ctx_req[ctx_idx].rs_fmt == FPU_FMT_S) begin
               issue_req.src_b = set_sign(ctx_x[ctx_idx],
                                          ctx_req[ctx_idx].rs_fmt,
