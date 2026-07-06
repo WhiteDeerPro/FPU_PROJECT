@@ -43,6 +43,8 @@ This keeps the top-level bus compact while still distinguishing single/double fl
 - `docs/fpu_pipeline_notes.md`: rounding model, convert/add-sub critical paths,
   and suggested pipeline cut points.
 - `docs/fpu_unit_flow.md`: datapath flow diagrams for the main units.
+- `docs/fpu_compressor_notes.md`: bit-compressor diagrams used by multiplier
+  and lookup-table reduction logic.
 
 ## Top Wrapper Status
 
