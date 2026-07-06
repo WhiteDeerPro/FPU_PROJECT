@@ -13,6 +13,7 @@ rtl/common/fpu_compressors.sv
 rtl/common/fpu_mult.sv
 rtl/common/fpu_mult_pipe.sv
 rtl/common/fpu_recip_seed_lut.sv
+rtl/common/fpu_rsqrt_seed_lut.sv
 
 rtl/units/fpu_convert_unit.sv
 rtl/units/fpu_add_unit.sv
@@ -26,7 +27,7 @@ rtl/units_pipe/fpu_convert_unit_pipe.sv
 rtl/units_pipe/fpu_mult_unit_pipe.sv
 rtl/units_pipe/fpu_fma_unit_pipe.sv
 rtl/units_pipe/fpu_div_unit_pipe.sv
+rtl/units_pipe/fpu_sqrt_unit_pipe.sv
 rtl/units_pipe/fpu_compare_unit_pipe.sv
 
-// Future modules:
-// rtl/core/fpu_top.sv
+rtl/core/fpu_top.sv

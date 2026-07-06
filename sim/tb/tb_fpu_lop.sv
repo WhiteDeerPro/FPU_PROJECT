@@ -7,6 +7,8 @@ module tb_fpu_lop;
   logic        zero_o;
   logic [5:0]  pos_v2_o;
   logic        zero_v2_o;
+  logic [5:0]  pos_tree_o;
+  logic        zero_tree_o;
 
   int unsigned pass_cnt;
   int unsigned fail_cnt;
@@ -25,6 +27,15 @@ module tb_fpu_lop;
     .data_i(data_i),
     .pos_o (pos_v2_o),
     .zero_o(zero_v2_o)
+  );
+
+  fpu_lop #(
+    .DATA_W       (64),
+    .USE_TREE_IMPL(1'b1)
+  ) dut_tree (
+    .data_i(data_i),
+    .pos_o (pos_tree_o),
+    .zero_o(zero_tree_o)
   );
 
   function automatic logic [5:0] ref_lop64(input logic [63:0] data);
@@ -52,14 +63,17 @@ module tb_fpu_lop;
     exp_pos  = ref_lop64(data);
 
     if ((pos_o !== exp_pos) || (zero_o !== exp_zero) ||
-        (pos_v2_o !== exp_pos) || (zero_v2_o !== exp_zero)) begin
+        (pos_v2_o !== exp_pos) || (zero_v2_o !== exp_zero) ||
+        (pos_tree_o !== exp_pos) || (zero_tree_o !== exp_zero)) begin
       fail_cnt++;
-      $display("[FAIL] %-24s data=0x%016h exp_pos=%0d pos=%0d zero=%0b pos_v2=%0d zero_v2=%0b exp_zero=%0b",
-               name, data, exp_pos, pos_o, zero_o, pos_v2_o, zero_v2_o, exp_zero);
+      $display("[FAIL] %-24s data=0x%016h exp_pos=%0d pos=%0d zero=%0b pos_v2=%0d zero_v2=%0b pos_tree=%0d zero_tree=%0b exp_zero=%0b",
+               name, data, exp_pos, pos_o, zero_o, pos_v2_o, zero_v2_o,
+               pos_tree_o, zero_tree_o, exp_zero);
     end else begin
       pass_cnt++;
-      $display("[PASS] %-24s data=0x%016h pos=%0d zero=%0b pos_v2=%0d zero_v2=%0b",
-               name, data, pos_o, zero_o, pos_v2_o, zero_v2_o);
+      $display("[PASS] %-24s data=0x%016h pos=%0d zero=%0b pos_v2=%0d zero_v2=%0b pos_tree=%0d zero_tree=%0b",
+               name, data, pos_o, zero_o, pos_v2_o, zero_v2_o,
+               pos_tree_o, zero_tree_o);
     end
   endtask
 

@@ -30,7 +30,7 @@ VCS_FLAGS := -sverilog \
 SIM_FLAGS := +fsdb+autoflush +fsdb+all +fsdb+struct +fsdb+mda +max_cycles=$(MAX_CYCLES)
 
 # --- Targets ----------------------------------------------------------------
-.PHONY: all compile run verdi verdi_sch clean rerun lop recip_seed_lut mult_trig mult_trig_verdi mult_trig_rerun convert convert_pipe convert_verdi convert_rerun add add_pipe add_verdi add_rerun mult mult_pipe mult_pipe_common mult_verdi mult_rerun fma fma_cases fma_pipe fma_verdi fma_rerun div_cases div_pipe div_verdi div_rerun sgnj sgnj_verdi sgnj_rerun compare compare_pipe compare_verdi compare_rerun
+.PHONY: all compile run verdi verdi_sch clean rerun lop recip_seed_lut mult_trig mult_trig_verdi mult_trig_rerun convert convert_pipe convert_verdi convert_rerun add add_pipe add_verdi add_rerun mult mult_pipe mult_pipe_common mult_verdi mult_rerun fma fma_cases fma_pipe fma_verdi fma_rerun div_cases div_pipe div_verdi div_rerun sqrt_pipe sqrt_verdi sqrt_rerun top_compile sgnj sgnj_verdi sgnj_rerun compare compare_pipe compare_verdi compare_rerun
 
 all: clean compile run
 
@@ -135,6 +135,17 @@ div_verdi:
 	$(MAKE) verdi FLIST=fpu_div_pipe_vcs.f TOP=tb_fpu_div_pipe FSDB_FILE=tb_fpu_div_pipe.fsdb
 
 div_rerun: div_pipe
+
+sqrt_pipe:
+	$(MAKE) rerun FLIST=fpu_sqrt_pipe_vcs.f TOP=tb_fpu_sqrt_pipe FSDB_FILE=tb_fpu_sqrt_pipe.fsdb MAX_CYCLES=50000
+
+sqrt_verdi:
+	$(MAKE) verdi FLIST=fpu_sqrt_pipe_vcs.f TOP=tb_fpu_sqrt_pipe FSDB_FILE=tb_fpu_sqrt_pipe.fsdb
+
+sqrt_rerun: sqrt_pipe
+
+top_compile:
+	$(MAKE) clean compile FLIST=fpu_top_vcs.f TOP=fpu_top
 
 sgnj:
 	$(MAKE) rerun FLIST=fpu_sgnj_vcs.f TOP=tb_fpu_sgnj FSDB_FILE=tb_fpu_sgnj.fsdb
