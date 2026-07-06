@@ -139,6 +139,91 @@ flowchart LR
   COUT -.-> CIN
 ```
 
+## 4-2 Compression Tree View
+
+At the reduction-tree level, a 4-2 compressor is useful because every level
+roughly halves the number of rows while preserving the weighted sum. For a
+16-row example:
+
+```text
+A1 + A2 + ... + A16 = X1 + X2
+
+16 rows -> 8 rows -> 4 rows -> 2 rows
+          level 0    level 1    level 2
+```
+
+The final two rows `X1` and `X2` are then added by a normal carry-propagate
+adder. This is the main picture to keep in mind for multiplier partial-product
+reduction: compressors do not finish the addition; they reshape many aligned
+rows into two aligned rows with the same numeric value.
+
+```mermaid
+flowchart LR
+  classDef data fill:#fff,stroke:#111,stroke-width:1.5px,color:#111;
+  classDef ctrl fill:#f8f8f8,stroke:#333,stroke-width:1.2px,stroke-dasharray:5 4,color:#111;
+  classDef group fill:#fff,stroke:#111,stroke-width:1.6px,color:#111;
+
+  subgraph IN["Input partial-product rows"]
+    direction TB
+    A1["A1"]:::data
+    A2["A2"]:::data
+    A3["A3"]:::data
+    A4["A4"]:::data
+    A5["A5"]:::data
+    A6["A6"]:::data
+    A7["A7"]:::data
+    A8["A8"]:::data
+    A9["A9"]:::data
+    A10["A10"]:::data
+    A11["A11"]:::data
+    A12["A12"]:::data
+    A13["A13"]:::data
+    A14["A14"]:::data
+    A15["A15"]:::data
+    A16["A16"]:::data
+  end
+  class IN group
+
+  L0["4-2 compressor level 0<br/>16 rows -> 8 rows"]:::data
+  L1["4-2 compressor level 1<br/>8 rows -> 4 rows"]:::data
+  L2["4-2 compressor level 2<br/>4 rows -> 2 rows"]:::data
+
+  subgraph OUT["Reduced rows"]
+    direction TB
+    X1["X1"]:::data
+    X2["X2"]:::data
+  end
+  class OUT group
+
+  CPA["Final carry-propagate add<br/>X1 + X2"]:::data
+  EQ["X1 + X2 = A1 + A2 + ... + A16"]:::ctrl
+
+  IN --> L0 --> L1 --> L2 --> OUT --> CPA
+  OUT -. weighted-sum preserved .-> EQ
+```
+
+Compact view:
+
+```mermaid
+flowchart LR
+  classDef data fill:#fff,stroke:#111,stroke-width:1.5px,color:#111;
+  classDef ctrl fill:#f8f8f8,stroke:#333,stroke-width:1.2px,stroke-dasharray:5 4,color:#111;
+
+  A["A1, A2, A3, ... , A16<br/>16 aligned rows"]:::data
+  L0["4-2<br/>level 0"]:::data
+  B["8 rows"]:::data
+  L1["4-2<br/>level 1"]:::data
+  C["4 rows"]:::data
+  L2["4-2<br/>level 2"]:::data
+  X["X1, X2<br/>2 rows"]:::data
+  CPA["CPA"]:::data
+  R["final sum"]:::data
+  EQ["X1 + X2 = sum(A1..A16)"]:::ctrl
+
+  A --> L0 --> B --> L1 --> C --> L2 --> X --> CPA --> R
+  X -.-> EQ
+```
+
 The code in `fpu_compressor_4_2` writes this directly as Boolean compressor
 logic rather than instantiating two `fpu_compressor_3_2` submodules. The shape
 is still the same conceptual evolution: 3-2 full-adder compression, then a
