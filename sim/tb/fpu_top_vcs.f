@@ -19,4 +19,4 @@
 ../../rtl/units_pipe/fpu_sqrt_unit_pipe.sv
 ../../rtl/units_pipe/fpu_compare_unit_pipe.sv
 ../../rtl/core/fpu_top.sv
-tb_fpu_top.sv
+../tb/tb_fpu_top.sv
