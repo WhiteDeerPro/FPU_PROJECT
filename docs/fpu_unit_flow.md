@@ -74,31 +74,57 @@ resp_o, valid_op_o
 Diagram:
 
 ```mermaid
-flowchart TD
-  REQ["req_i: op, fmt, rm, src_a, src_b"]
-  UNPACK["Unpack S/D operands\nclassify zero/subnormal/normal/inf/nan"]
-  SUBSIGN["FSUB control\ninvert rhs sign when needed"]
-  ORDER["Magnitude ordering\ncompare exponent then significand\nselect big/small"]
-  DIFF["exp_diff and same_sign control"]
-  ALIGN["Right shift small significand\njam lost bits into sticky"]
-  ADDSUB{"same sign?"}
-  ADD["Add aligned significands"]
-  SUB["Subtract aligned significands\nbig - small"]
-  LOP["Leading-one detect\nfor cancellation path"]
-  NORM["Normalize significand\nadjust exponent"]
-  GRS["Select guard/round/sticky\nand retained LSB"]
-  ROUND["Round increment\nfrom rm, sign, LSB, GRS"]
-  PACK["Pack finite result\nS result is NaN-boxed"]
-  SPECIAL["Special-case mux\nNaN, invalid, inf, zero, finite"]
-  RESP["resp_o/result/fflags\nvalid_op_o"]
+flowchart LR
+  classDef data fill:#fff,stroke:#111,stroke-width:1.5px,color:#111;
+  classDef ctrl fill:#f8f8f8,stroke:#333,stroke-width:1.2px,stroke-dasharray:5 4,color:#111;
+  classDef group fill:#fff,stroke:#111,stroke-width:1.6px,color:#111;
 
-  REQ --> UNPACK --> SUBSIGN --> ORDER --> DIFF --> ALIGN --> ADDSUB
-  ADDSUB -- yes --> ADD --> NORM
-  ADDSUB -- no --> SUB --> LOP --> NORM
-  NORM --> GRS --> ROUND --> PACK --> SPECIAL --> RESP
+  A["src_a"]:::data
+  B["src_b"]:::data
+  REQ["Decoded request<br/>ADD/SUB · S/D · RM"]:::ctrl
+
+  UNPACK["Unpack & classify<br/>sign · exponent · significand<br/>zero / inf / nan"]:::data
+  SIGN["Sign control<br/>SUB: invert rhs sign"]:::data
+  ORDER["Magnitude compare<br/>select big / small"]:::data
+  ALIGN["Align significands<br/>shift small operand"]:::data
+
+  subgraph CORE["Finite arithmetic core"]
+    direction TB
+    ADD["Add path<br/>same-sign sum"]:::data
+    SUB["Subtract path<br/>opposite-sign diff"]:::data
+    CORR["Cancellation correction"]:::data
+  end
+  class CORE group
+
+  NORM["Normalize<br/>select sign / exponent / significand"]:::data
+  ROUND["Round<br/>RM controlled"]:::data
+  PACK["Pack format<br/>S/D result<br/>NaN-box S"]:::data
+  SPECIAL["Special cases<br/>NaN · invalid · inf · zero"]:::ctrl
+  CTRL["Control & status<br/>op · fmt · valid_op · fflags"]:::ctrl
+  MUX["Final result mux"]:::data
+
+  A --> UNPACK
+  B --> UNPACK
+  REQ -.-> CTRL
+  CTRL -.-> SIGN
+  CTRL -.-> ROUND
+  CTRL -.-> PACK
+
+  UNPACK --> SIGN --> ORDER --> ALIGN
+  ALIGN --> ADD
+  ALIGN --> SUB
+  SUB --> CORR
+  ADD --> NORM
+  CORR --> NORM
+  NORM --> ROUND --> PACK --> MUX
+
   UNPACK -. class flags .-> SPECIAL
-  SUBSIGN -. result sign control .-> SPECIAL
-  ORDER -. zero/cancel sign .-> SPECIAL
+  CTRL -. op/fmt/rm .-> SPECIAL
+  SPECIAL -. override .-> MUX
+
+  MUX --> RESULT["Result"]:::data
+  MUX --> FLAGS["fflags"]:::data
+  CTRL --> VALID["valid_op"]:::data
 ```
 
 Suggested code sections:
@@ -176,28 +202,49 @@ resp_o, valid_op_o
 Diagram:
 
 ```mermaid
-flowchart TD
-  REQ["req_i: fmt, rm, src_a, src_b"]
-  UNPACK["Unpack S/D operands\nclassify special cases"]
-  SIGN["result_sign = sign_a xor sign_b"]
-  SIG["Build hidden-bit significands\nS extends into D-width workspace"]
-  MUL["53 x 53 significand multiply"]
-  LOP["Product leading-one detect"]
-  RAWEXP["Raw exponent\nexp_a + exp_b - bias"]
-  NORM["Normalize product\nselect high product window"]
-  SUBN["Normal/subnormal decision\nright shift and jam if tiny"]
-  GRS["Select guard/round/sticky\nand retained LSB"]
-  ROUND["Round increment\nfrom rm, sign, LSB, GRS"]
-  PACK["Pack finite result\nhandle carry/overflow/underflow"]
-  SPECIAL["Special-case mux\nNaN, inf*0 invalid, inf, zero, finite"]
-  RESP["resp_o/result/fflags\nvalid_op_o"]
+flowchart LR
+  classDef data fill:#fff,stroke:#111,stroke-width:1.5px,color:#111;
+  classDef ctrl fill:#f8f8f8,stroke:#333,stroke-width:1.2px,stroke-dasharray:5 4,color:#111;
+  classDef group fill:#fff,stroke:#111,stroke-width:1.6px,color:#111;
 
-  REQ --> UNPACK --> SIGN --> SIG --> MUL --> LOP --> NORM --> SUBN --> GRS --> ROUND --> PACK --> SPECIAL --> RESP
-  UNPACK -. exponent fields .-> RAWEXP
-  RAWEXP --> NORM
+  A["src_a"]:::data
+  B["src_b"]:::data
+  REQ["Decoded request<br/>MUL · S/D · RM"]:::ctrl
+
+  UNPACK["Unpack & classify<br/>sign · exponent · significand<br/>zero / inf / nan"]:::data
+  SIGN["Sign control<br/>sign_a xor sign_b"]:::data
+  PREP["Operand prepare<br/>hidden-bit significands<br/>exponent sum"]:::data
+
+  subgraph CORE["Finite multiply core"]
+    direction TB
+    MUL["Significand multiply<br/>common 53-bit path"]:::data
+    NORM["Product normalize<br/>exponent adjust"]:::data
+  end
+  class CORE group
+
+  RANGE["Range handling<br/>normal / subnormal / overflow"]:::data
+  ROUND["Round<br/>RM controlled"]:::data
+  PACK["Pack format<br/>S/D result<br/>NaN-box S"]:::data
+  SPECIAL["Special cases<br/>NaN · inf*0 · inf · zero"]:::ctrl
+  CTRL["Control & status<br/>fmt · rm · valid_op · fflags"]:::ctrl
+  MUX["Final result mux"]:::data
+
+  A --> UNPACK
+  B --> UNPACK
+  REQ -.-> CTRL
+  CTRL -.-> ROUND
+  CTRL -.-> PACK
+
+  UNPACK --> SIGN --> PREP --> MUL --> NORM --> RANGE --> ROUND --> PACK --> MUX
   UNPACK -. class flags .-> SPECIAL
-  SIGN -. sign .-> PACK
-  SIGN -. sign .-> SPECIAL
+  SIGN -. result sign .-> PACK
+  SIGN -. result sign .-> SPECIAL
+  CTRL -. fmt/rm .-> SPECIAL
+  SPECIAL -. override .-> MUX
+
+  MUX --> RESULT["Result"]:::data
+  MUX --> FLAGS["fflags"]:::data
+  CTRL --> VALID["valid_op"]:::data
 ```
 
 Suggested code sections:
@@ -443,6 +490,62 @@ select leaf response by req_i.op
 resp_o, valid_op_o
 ```
 
+Diagram:
+
+```mermaid
+flowchart LR
+  classDef data fill:#fff,stroke:#111,stroke-width:1.5px,color:#111;
+  classDef ctrl fill:#f8f8f8,stroke:#333,stroke-width:1.2px,stroke-dasharray:5 4,color:#111;
+  classDef group fill:#fff,stroke:#111,stroke-width:1.6px,color:#111;
+
+  A["src_a"]:::data
+  REQ["Decoded request<br/>CVT_I2F / CVT_F2I / CVT_FP<br/>S/D · W/WU/L/LU · RM"]:::ctrl
+  DECODE["Convert decode<br/>operation · formats · signedness"]:::ctrl
+
+  subgraph I2F["Integer to FP leaf"]
+    direction TB
+    I2F_IN["Integer sign/magnitude"]:::data
+    I2F_NORM["Normalize magnitude"]:::data
+    I2F_PACK["Round & pack FP"]:::data
+  end
+  class I2F group
+
+  subgraph F2I["FP to integer leaf"]
+    direction TB
+    F2I_UNPACK["Unpack & classify FP"]:::data
+    F2I_RANGE["Boundary / range check"]:::data
+    F2I_PACK["Round, saturate, pack integer"]:::data
+  end
+  class F2I group
+
+  subgraph F2F["FP to FP leaf"]
+    direction TB
+    F2F_UNPACK["Unpack & classify FP"]:::data
+    F2F_CONV["Rebias / widen / narrow"]:::data
+    F2F_PACK["Round & pack FP"]:::data
+  end
+  class F2F group
+
+  CTRL["Control & status<br/>valid_op · fflags"]:::ctrl
+  MUX["Conversion response mux"]:::data
+
+  A --> I2F_IN --> I2F_NORM --> I2F_PACK --> MUX
+  A --> F2I_UNPACK --> F2I_RANGE --> F2I_PACK --> MUX
+  A --> F2F_UNPACK --> F2F_CONV --> F2F_PACK --> MUX
+
+  REQ -.-> DECODE
+  DECODE -. op select .-> MUX
+  DECODE -. fmt/int_fmt/rm .-> I2F_IN
+  DECODE -. fmt/int_fmt/rm .-> F2I_RANGE
+  DECODE -. fmt/rm .-> F2F_CONV
+  DECODE -.-> CTRL
+  CTRL -. flags .-> MUX
+
+  MUX --> RESULT["Result payload"]:::data
+  MUX --> FLAGS["fflags"]:::data
+  CTRL --> VALID["valid_op"]:::data
+```
+
 Future pipeline anchors:
 
 ```text
@@ -480,6 +583,51 @@ pack integer result and flags
   |
   v
 resp_o, valid_op_o
+```
+
+Diagram:
+
+```mermaid
+flowchart LR
+  classDef data fill:#fff,stroke:#111,stroke-width:1.5px,color:#111;
+  classDef ctrl fill:#f8f8f8,stroke:#333,stroke-width:1.2px,stroke-dasharray:5 4,color:#111;
+  classDef group fill:#fff,stroke:#111,stroke-width:1.6px,color:#111;
+
+  A["src_a"]:::data
+  B["src_b"]:::data
+  REQ["Decoded request<br/>FEQ/FLT/FLE · FMIN/FMAX · FCLASS<br/>S/D"]:::ctrl
+
+  UNPACK["Unpack & classify<br/>sign · magnitude · class flags"]:::data
+  NAN["NaN / sNaN control<br/>invalid flag source"]:::ctrl
+
+  subgraph CORE["Compare / classify core"]
+    direction TB
+    CMP["Compare predicates<br/>eq · lt · le"]:::data
+    MINMAX["Min/Max select<br/>NaN and signed-zero rules"]:::data
+    CLASS["Class vector<br/>10-bit FP class mask"]:::data
+  end
+  class CORE group
+
+  CTRL["Operation select<br/>valid_op · fflags"]:::ctrl
+  MUX["Final operation mux"]:::data
+
+  A --> UNPACK
+  B --> UNPACK
+  REQ -.-> CTRL
+  UNPACK --> CMP
+  UNPACK --> MINMAX
+  UNPACK --> CLASS
+  UNPACK -. class flags .-> NAN
+  NAN -. invalid .-> CTRL
+
+  CMP --> MUX
+  MINMAX --> MUX
+  CLASS --> MUX
+  CTRL -. op select .-> MUX
+
+  MUX --> RESULT["Result payload<br/>boolean / FP value / class mask"]:::data
+  CTRL --> FLAGS["fflags"]:::data
+  CTRL --> VALID["valid_op"]:::data
 ```
 
 Future pipeline anchors:
