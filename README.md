@@ -46,6 +46,8 @@ Simulation outputs are written under `sim/01`, keeping `sim/tb` source-only.
 
 - `docs/fpu_arch.md` records the top-level integration boundary, CSR/flush
   expectations, and throughput-scaling notes.
+- `docs/fpu_top_integration_plan.md` records the planned top-level CSR,
+  response FIFO, flush, and vector/multi-issue integration work.
 - `docs/fpu_unit_flow.md` records unit datapath flow diagrams for code reading.
 
 Known issue: the current FDIV iterative datapath does not yet special-case

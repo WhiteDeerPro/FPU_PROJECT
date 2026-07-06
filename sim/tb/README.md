@@ -14,6 +14,7 @@ tb_fpu_fma.sv       fused multiply-add unit self-checking testbench
 tb_fpu_fma_pipe.sv  pipelined FMA unit self-checking testbench
 tb_fpu_sgnj.sv      sign-injection unit self-checking testbench
 tb_fpu_compare.sv   compare/min/max/class unit self-checking testbench
+tb_fpu_top.sv       integrated fpu_top mixed-operation smoke testbench
 tb_fpu_mult_trig.sv multiplier sine-square stimulus testbench
 fpu_lop_vcs.f       VCS/Verdi filelist
 fpu_convert_vcs.f   convert unit VCS/Verdi filelist
@@ -23,6 +24,7 @@ fpu_fma_vcs.f       fused multiply-add unit VCS/Verdi filelist
 fpu_fma_pipe_vcs.f  pipelined FMA unit VCS/Verdi filelist
 fpu_sgnj_vcs.f      sign-injection unit VCS/Verdi filelist
 fpu_compare_vcs.f   compare/min/max/class unit VCS/Verdi filelist
+fpu_top_vcs.f       integrated fpu_top VCS/Verdi filelist
 fpu_mult_trig_vcs.f multiplier sine-square VCS/Verdi filelist
 Makefile            compile, run, waveform, and schematic targets
 ```
@@ -53,6 +55,8 @@ make sgnj
 make sgnj_verdi
 make compare
 make compare_verdi
+make top
+make top_verdi
 make clean
 ```
 

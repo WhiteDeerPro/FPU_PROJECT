@@ -4,7 +4,7 @@
 
 TB_DIR := sim/tb
 
-.PHONY: all compile run verdi verdi_sch clean rerun lop recip_seed_lut mult_trig mult_trig_verdi mult_trig_rerun convert convert_pipe convert_verdi convert_rerun add add_pipe add_verdi add_rerun mult mult_cases mult_pipe mult_pipe_common mult_verdi mult_rerun fma fma_cases fma_pipe fma_verdi fma_rerun div_cases div_pipe div_verdi div_rerun sqrt_cases sqrt_pipe sqrt_verdi sqrt_rerun sgnj sgnj_verdi sgnj_rerun compare compare_pipe compare_verdi compare_rerun tree
+.PHONY: all compile run verdi verdi_sch clean rerun lop recip_seed_lut mult_trig mult_trig_verdi mult_trig_rerun convert convert_pipe convert_verdi convert_rerun add add_pipe add_verdi add_rerun mult mult_cases mult_pipe mult_pipe_common mult_verdi mult_rerun fma fma_cases fma_pipe fma_verdi fma_rerun div_cases div_pipe div_verdi div_rerun sqrt_cases sqrt_pipe sqrt_verdi sqrt_rerun top top_compile top_verdi top_rerun sgnj sgnj_verdi sgnj_rerun compare compare_pipe compare_verdi compare_rerun tree
 
 all:
 	$(MAKE) -C $(TB_DIR) all
@@ -146,6 +146,15 @@ compare_rerun:
 
 top_compile:
 	$(MAKE) -C $(TB_DIR) top_compile
+
+top:
+	$(MAKE) -C $(TB_DIR) top
+
+top_verdi:
+	$(MAKE) -C $(TB_DIR) top_verdi
+
+top_rerun:
+	$(MAKE) -C $(TB_DIR) top_rerun
 
 tree:
 	@find . -path './.git' -prune -o -path './.agents' -prune -o -print
