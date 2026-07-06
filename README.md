@@ -42,6 +42,17 @@ make clean
 The top-level Makefile delegates to `sim/tb/Makefile`.
 Simulation outputs are written under `sim/01`, keeping `sim/tb` source-only.
 
+## Design notes
+
+- `docs/fpu_arch.md` records the top-level integration boundary, CSR/flush
+  expectations, and throughput-scaling notes.
+- `docs/fpu_unit_flow.md` records unit datapath flow diagrams for code reading.
+
+Known issue: the current FDIV iterative datapath does not yet special-case
+finite nonzero `A/A`. Some exact quotient samples can raise `NX`, and RTZ/RDN
+can produce one ulp below `1.0`; random div vectors avoid raw identical
+operands until the final residual/exactness path is fixed.
+
 ## License
 
 This project is licensed under the MIT License. See [LICENSE](LICENSE).

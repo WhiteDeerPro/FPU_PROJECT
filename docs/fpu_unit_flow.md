@@ -71,6 +71,36 @@ special-case/result mux: invalid, NaN, infinities, zeros, finite
 resp_o, valid_op_o
 ```
 
+Diagram:
+
+```mermaid
+flowchart TD
+  REQ["req_i: op, fmt, rm, src_a, src_b"]
+  UNPACK["Unpack S/D operands\nclassify zero/subnormal/normal/inf/nan"]
+  SUBSIGN["FSUB control\ninvert rhs sign when needed"]
+  ORDER["Magnitude ordering\ncompare exponent then significand\nselect big/small"]
+  DIFF["exp_diff and same_sign control"]
+  ALIGN["Right shift small significand\njam lost bits into sticky"]
+  ADDSUB{"same sign?"}
+  ADD["Add aligned significands"]
+  SUB["Subtract aligned significands\nbig - small"]
+  LOP["Leading-one detect\nfor cancellation path"]
+  NORM["Normalize significand\nadjust exponent"]
+  GRS["Select guard/round/sticky\nand retained LSB"]
+  ROUND["Round increment\nfrom rm, sign, LSB, GRS"]
+  PACK["Pack finite result\nS result is NaN-boxed"]
+  SPECIAL["Special-case mux\nNaN, invalid, inf, zero, finite"]
+  RESP["resp_o/result/fflags\nvalid_op_o"]
+
+  REQ --> UNPACK --> SUBSIGN --> ORDER --> DIFF --> ALIGN --> ADDSUB
+  ADDSUB -- yes --> ADD --> NORM
+  ADDSUB -- no --> SUB --> LOP --> NORM
+  NORM --> GRS --> ROUND --> PACK --> SPECIAL --> RESP
+  UNPACK -. class flags .-> SPECIAL
+  SUBSIGN -. result sign control .-> SPECIAL
+  ORDER -. zero/cancel sign .-> SPECIAL
+```
+
 Suggested code sections:
 
 ```text
@@ -141,6 +171,33 @@ special-case/result mux: NaN, inf*0 invalid, infinities, zeros, finite
   |
   v
 resp_o, valid_op_o
+```
+
+Diagram:
+
+```mermaid
+flowchart TD
+  REQ["req_i: fmt, rm, src_a, src_b"]
+  UNPACK["Unpack S/D operands\nclassify special cases"]
+  SIGN["result_sign = sign_a xor sign_b"]
+  SIG["Build hidden-bit significands\nS extends into D-width workspace"]
+  MUL["53 x 53 significand multiply"]
+  LOP["Product leading-one detect"]
+  RAWEXP["Raw exponent\nexp_a + exp_b - bias"]
+  NORM["Normalize product\nselect high product window"]
+  SUBN["Normal/subnormal decision\nright shift and jam if tiny"]
+  GRS["Select guard/round/sticky\nand retained LSB"]
+  ROUND["Round increment\nfrom rm, sign, LSB, GRS"]
+  PACK["Pack finite result\nhandle carry/overflow/underflow"]
+  SPECIAL["Special-case mux\nNaN, inf*0 invalid, inf, zero, finite"]
+  RESP["resp_o/result/fflags\nvalid_op_o"]
+
+  REQ --> UNPACK --> SIGN --> SIG --> MUL --> LOP --> NORM --> SUBN --> GRS --> ROUND --> PACK --> SPECIAL --> RESP
+  UNPACK -. exponent fields .-> RAWEXP
+  RAWEXP --> NORM
+  UNPACK -. class flags .-> SPECIAL
+  SIGN -. sign .-> PACK
+  SIGN -. sign .-> SPECIAL
 ```
 
 Suggested code sections:
@@ -462,4 +519,3 @@ Future pipeline anchors:
 ```text
 Keep combinational or use one registered output stage for interface alignment.
 ```
-
