@@ -4,7 +4,7 @@
 
 TB_DIR := sim/tb
 
-.PHONY: all compile run verdi verdi_sch clean rerun lop recip_seed_lut mult_trig mult_trig_verdi mult_trig_rerun convert convert_pipe convert_verdi convert_rerun add add_pipe add_verdi add_rerun mult mult_pipe mult_pipe_common mult_verdi mult_rerun fma fma_pipe fma_verdi fma_rerun div_pipe div_verdi div_rerun sgnj sgnj_verdi sgnj_rerun compare compare_pipe compare_verdi compare_rerun tree
+.PHONY: all compile run verdi verdi_sch clean rerun lop recip_seed_lut mult_trig mult_trig_verdi mult_trig_rerun convert convert_pipe convert_verdi convert_rerun add add_pipe add_verdi add_rerun mult mult_cases mult_pipe mult_pipe_common mult_verdi mult_rerun fma fma_cases fma_pipe fma_verdi fma_rerun div_cases div_pipe div_verdi div_rerun sqrt_cases sqrt_pipe sqrt_verdi sqrt_rerun sgnj sgnj_verdi sgnj_rerun compare compare_pipe compare_verdi compare_rerun tree
 
 all:
 	$(MAKE) -C $(TB_DIR) all
@@ -72,6 +72,9 @@ mult:
 mult_pipe:
 	$(MAKE) -C $(TB_DIR) mult_pipe
 
+mult_cases:
+	$(MAKE) -C $(TB_DIR) mult_cases
+
 mult_pipe_common:
 	$(MAKE) -C $(TB_DIR) mult_pipe_common
 
@@ -87,6 +90,9 @@ fma:
 fma_pipe:
 	$(MAKE) -C $(TB_DIR) fma_pipe
 
+fma_cases:
+	$(MAKE) -C $(TB_DIR) fma_cases
+
 fma_verdi:
 	$(MAKE) -C $(TB_DIR) fma_verdi
 
@@ -96,11 +102,26 @@ fma_rerun:
 div_pipe:
 	$(MAKE) -C $(TB_DIR) div_pipe
 
+div_cases:
+	$(MAKE) -C $(TB_DIR) div_cases
+
 div_verdi:
 	$(MAKE) -C $(TB_DIR) div_verdi
 
 div_rerun:
 	$(MAKE) -C $(TB_DIR) div_rerun
+
+sqrt_pipe:
+	$(MAKE) -C $(TB_DIR) sqrt_pipe
+
+sqrt_cases:
+	$(MAKE) -C $(TB_DIR) sqrt_cases
+
+sqrt_verdi:
+	$(MAKE) -C $(TB_DIR) sqrt_verdi
+
+sqrt_rerun:
+	$(MAKE) -C $(TB_DIR) sqrt_rerun
 
 sgnj:
 	$(MAKE) -C $(TB_DIR) sgnj
@@ -122,6 +143,9 @@ compare_verdi:
 
 compare_rerun:
 	$(MAKE) -C $(TB_DIR) compare_rerun
+
+top_compile:
+	$(MAKE) -C $(TB_DIR) top_compile
 
 tree:
 	@find . -path './.git' -prune -o -path './.agents' -prune -o -print

@@ -5,10 +5,10 @@ module tb_fpu_fma_pipe;
 
   localparam int unsigned LATENCY      = 5;
   localparam int unsigned NUM_CASES    = 192;
-  localparam int unsigned FMA_SUBNORMAL_VEC_COUNT = 10000;
+  localparam int unsigned FMA_RANDOM_VEC_COUNT = 10000;
   localparam int unsigned DRAIN_CYCLES = LATENCY + 3;
 
-  typedef logic [260:0] fma_ext_vec_t;
+  typedef logic [267:0] fma_ext_vec_t;
 
   logic      clk_i;
   logic      rst_ni;
@@ -36,14 +36,14 @@ module tb_fpu_fma_pipe;
   int unsigned pass_cnt;
   int unsigned fail_cnt;
   int unsigned cycle_cnt;
-  int unsigned fma_subnormal_pass_cnt;
-  int unsigned fma_subnormal_result_fail_cnt;
-  int unsigned fma_subnormal_nx_fail_cnt;
-  int unsigned fma_subnormal_result_fail_by_fmt_rm [2][5];
-  int unsigned fma_subnormal_nx_fail_by_fmt_rm     [2][5];
-  int unsigned fma_subnormal_count_by_fmt_rm       [2][5];
+  int unsigned fma_random_pass_cnt;
+  int unsigned fma_random_result_fail_cnt;
+  int unsigned fma_random_nx_fail_cnt;
+  int unsigned fma_random_result_fail_by_fmt_rm [2][5];
+  int unsigned fma_random_nx_fail_by_fmt_rm     [2][5];
+  int unsigned fma_random_count_by_fmt_rm       [2][5];
 
-  fma_ext_vec_t fma_subnormal_vec [FMA_SUBNORMAL_VEC_COUNT];
+  fma_ext_vec_t fma_random_vec [FMA_RANDOM_VEC_COUNT];
 
   fpu_fma_unit u_ref (
     .req_i     (req_i),
@@ -257,27 +257,25 @@ module tb_fpu_fma_pipe;
         if ((pipe_valid_op_o === exp_valid_op[LATENCY-1]) &&
             (pipe_resp_o.result === exp_resp[LATENCY-1].result) &&
             ((exp_is_ext[LATENCY-1] &&
-              (pipe_resp_o.fflags[FPU_FFLAG_NX] ===
-               exp_resp[LATENCY-1].fflags[FPU_FFLAG_NX])) ||
+              (pipe_resp_o.fflags === exp_resp[LATENCY-1].fflags)) ||
              (!exp_is_ext[LATENCY-1] &&
               (pipe_resp_o.fflags === exp_resp[LATENCY-1].fflags))) &&
             (pipe_resp_o.tag === exp_resp[LATENCY-1].tag) &&
             (pipe_resp_o.rd === exp_resp[LATENCY-1].rd)) begin
           pass_cnt++;
           if (exp_is_ext[LATENCY-1]) begin
-            fma_subnormal_pass_cnt++;
+            fma_random_pass_cnt++;
           end
         end else begin
           if (exp_is_ext[LATENCY-1]) begin
             if (pipe_resp_o.result !== exp_resp[LATENCY-1].result) begin
-              fma_subnormal_result_fail_cnt++;
-              fma_subnormal_result_fail_by_fmt_rm[exp_ext_fmt[LATENCY-1]]
+              fma_random_result_fail_cnt++;
+              fma_random_result_fail_by_fmt_rm[exp_ext_fmt[LATENCY-1]]
                                                   [exp_ext_rm[LATENCY-1]]++;
             end
-            if (pipe_resp_o.fflags[FPU_FFLAG_NX] !==
-                exp_resp[LATENCY-1].fflags[FPU_FFLAG_NX]) begin
-              fma_subnormal_nx_fail_cnt++;
-              fma_subnormal_nx_fail_by_fmt_rm[exp_ext_fmt[LATENCY-1]]
+            if (pipe_resp_o.fflags !== exp_resp[LATENCY-1].fflags) begin
+              fma_random_nx_fail_cnt++;
+              fma_random_nx_fail_by_fmt_rm[exp_ext_fmt[LATENCY-1]]
                                               [exp_ext_rm[LATENCY-1]]++;
             end
           end
@@ -293,27 +291,34 @@ module tb_fpu_fma_pipe;
     end
   end
 
-  task automatic run_fma_subnormal_vectors;
+  task automatic run_fma_random_vectors;
     logic          fmt_bit;
+    logic [1:0]    op_bits;
     logic [2:0]    rm_bits;
     fpu_data_t     src_a;
     fpu_data_t     src_b;
     fpu_data_t     src_c;
     fpu_data_t     exp_result;
-    logic          exp_nx;
+    fpu_fflags_t   exp_fflags;
+    logic          exp_valid_op;
 
-    $readmemh("../tb/fpu_fma_subnormal_cases.mem", fma_subnormal_vec);
+    $readmemh("../tb/fpu_fma_random_cases.mem", fma_random_vec);
     ext_ref_mode = 1'b1;
 
-    for (int unsigned vec_idx = 0; vec_idx < FMA_SUBNORMAL_VEC_COUNT; vec_idx++) begin
-      {fmt_bit, rm_bits, src_a, src_b, src_c, exp_result, exp_nx} =
-        fma_subnormal_vec[vec_idx];
+    for (int unsigned vec_idx = 0; vec_idx < FMA_RANDOM_VEC_COUNT; vec_idx++) begin
+      {fmt_bit, op_bits, rm_bits, src_a, src_b, src_c, exp_result, exp_fflags, exp_valid_op} =
+        fma_random_vec[vec_idx];
 
       @(posedge clk_i);
       #1;
       valid_i = 1'b1;
       req_i = '0;
-      req_i.op      = FPU_OP_FMADD;
+      unique case (op_bits)
+        2'd0: req_i.op = FPU_OP_FMADD;
+        2'd1: req_i.op = FPU_OP_FMSUB;
+        2'd2: req_i.op = FPU_OP_FNMSUB;
+        default: req_i.op = FPU_OP_FNMADD;
+      endcase
       req_i.rs_fmt  = fmt_bit ? FPU_FMT_D : FPU_FMT_S;
       req_i.dst_fmt = req_i.rs_fmt;
       req_i.rm      = ext_rm_sel(rm_bits);
@@ -323,17 +328,16 @@ module tb_fpu_fma_pipe;
       req_i.tag     = vec_idx[7:0];
       req_i.rd      = vec_idx[4:0];
 
-      ext_ref_valid_op = 1'b1;
+      ext_ref_valid_op = exp_valid_op;
       ext_ref_fmt      = fmt_bit;
       ext_ref_rm       = rm_bits;
       ext_ref_resp     = '0;
       ext_ref_resp.result = exp_result;
-      ext_ref_resp.fflags[FPU_FFLAG_NX] = exp_nx;
-      ext_ref_resp.fflags[FPU_FFLAG_UF] = exp_nx;
+      ext_ref_resp.fflags = exp_fflags;
       ext_ref_resp.tag = vec_idx[7:0];
       ext_ref_resp.rd  = vec_idx[4:0];
 
-      fma_subnormal_count_by_fmt_rm[fmt_bit][rm_bits]++;
+      fma_random_count_by_fmt_rm[fmt_bit][rm_bits]++;
     end
 
     @(posedge clk_i);
@@ -346,15 +350,15 @@ module tb_fpu_fma_pipe;
 
     repeat (DRAIN_CYCLES) @(posedge clk_i);
 
-    $display("tb_fpu_fma_pipe subnormal summary: total=%0d pass=%0d result_fail=%0d nx_fail=%0d",
-             FMA_SUBNORMAL_VEC_COUNT, fma_subnormal_pass_cnt,
-             fma_subnormal_result_fail_cnt, fma_subnormal_nx_fail_cnt);
+    $display("tb_fpu_fma_pipe random summary: total=%0d pass=%0d result_fail=%0d flags_fail=%0d",
+             FMA_RANDOM_VEC_COUNT, fma_random_pass_cnt,
+             fma_random_result_fail_cnt, fma_random_nx_fail_cnt);
     for (int unsigned fmt_idx = 0; fmt_idx < 2; fmt_idx++) begin
       for (int unsigned rm_idx = 0; rm_idx < 5; rm_idx++) begin
-        $display("tb_fpu_fma_pipe subnormal bucket fmt=%0d rm=%0d count=%0d result_fail=%0d nx_fail=%0d",
-                 fmt_idx, rm_idx, fma_subnormal_count_by_fmt_rm[fmt_idx][rm_idx],
-                 fma_subnormal_result_fail_by_fmt_rm[fmt_idx][rm_idx],
-                 fma_subnormal_nx_fail_by_fmt_rm[fmt_idx][rm_idx]);
+        $display("tb_fpu_fma_pipe random bucket fmt=%0d rm=%0d count=%0d result_fail=%0d flags_fail=%0d",
+                 fmt_idx, rm_idx, fma_random_count_by_fmt_rm[fmt_idx][rm_idx],
+                 fma_random_result_fail_by_fmt_rm[fmt_idx][rm_idx],
+                 fma_random_nx_fail_by_fmt_rm[fmt_idx][rm_idx]);
       end
     end
   endtask
@@ -371,14 +375,14 @@ module tb_fpu_fma_pipe;
     ext_ref_rm = 3'd0;
     ext_ref_resp = '0;
     ext_ref_valid_op = 1'b0;
-    fma_subnormal_pass_cnt = 0;
-    fma_subnormal_result_fail_cnt = 0;
-    fma_subnormal_nx_fail_cnt = 0;
+    fma_random_pass_cnt = 0;
+    fma_random_result_fail_cnt = 0;
+    fma_random_nx_fail_cnt = 0;
     for (int unsigned fmt_idx = 0; fmt_idx < 2; fmt_idx++) begin
       for (int unsigned rm_idx = 0; rm_idx < 5; rm_idx++) begin
-        fma_subnormal_result_fail_by_fmt_rm[fmt_idx][rm_idx] = 0;
-        fma_subnormal_nx_fail_by_fmt_rm[fmt_idx][rm_idx] = 0;
-        fma_subnormal_count_by_fmt_rm[fmt_idx][rm_idx] = 0;
+        fma_random_result_fail_by_fmt_rm[fmt_idx][rm_idx] = 0;
+        fma_random_nx_fail_by_fmt_rm[fmt_idx][rm_idx] = 0;
+        fma_random_count_by_fmt_rm[fmt_idx][rm_idx] = 0;
       end
     end
 
@@ -400,7 +404,7 @@ module tb_fpu_fma_pipe;
 
     repeat (DRAIN_CYCLES) @(posedge clk_i);
 
-    run_fma_subnormal_vectors();
+    run_fma_random_vectors();
 
     $display("tb_fpu_fma_pipe summary: pass=%0d fail=%0d",
              pass_cnt, fail_cnt);

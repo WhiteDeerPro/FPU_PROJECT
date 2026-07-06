@@ -9,7 +9,7 @@ module tb_fpu_div_pipe;
   localparam int unsigned SUBNORMAL_VEC_COUNT = 10000;
   localparam int unsigned RANDOM_PRINT_LIMIT = 20;
 
-  typedef logic [196:0] div_random_vec_t;
+  typedef logic [201:0] div_random_vec_t;
 
   logic      clk_i;
   logic      rst_ni;
@@ -334,18 +334,19 @@ module tb_fpu_div_pipe;
     fpu_data_t     src_a;
     fpu_data_t     src_b;
     fpu_data_t     exp_result;
-    logic          exp_nx;
+    fpu_fflags_t   exp_fflags;
+    logic          exp_valid_op;
     fpu_req_t      req;
     int unsigned   waited;
     logic          result_match;
-    logic          nx_match;
+    logic          flags_match;
 
-    {fmt_bit, rm_bits, src_a, src_b, exp_result, exp_nx} = random_vec[idx];
+    {fmt_bit, rm_bits, src_a, src_b, exp_result, exp_fflags, exp_valid_op} = random_vec[idx];
     req          = make_req(vec_fmt(fmt_bit), vec_rm(rm_bits),
                             src_a, src_b, 8'hc0 + idx[7:0]);
     waited       = 0;
     result_match = 1'b0;
-    nx_match     = 1'b0;
+    flags_match  = 1'b0;
 
     random_count_by_fmt_rm[fmt_bit][rm_bits]++;
 
@@ -379,104 +380,26 @@ module tb_fpu_div_pipe;
       end
     end else begin
       result_match = (resp_o.result === exp_result);
-      nx_match     = (resp_o.fflags[FPU_FFLAG_NX] === exp_nx);
+      flags_match  = (resp_o.fflags === exp_fflags);
 
-      if (result_match && nx_match) begin
+      if (result_match && flags_match) begin
         random_pass_cnt++;
       end
       if (!result_match) begin
         random_result_fail_cnt++;
         random_result_fail_by_fmt_rm[fmt_bit][rm_bits]++;
       end
-      if (!nx_match) begin
+      if (!flags_match) begin
         random_nx_fail_cnt++;
         random_nx_fail_by_fmt_rm[fmt_bit][rm_bits]++;
       end
-      if (!result_match || !nx_match) begin
+      if (!result_match || !flags_match) begin
         fail_cnt++;
         if (random_print_cnt < RANDOM_PRINT_LIMIT) begin
-          $display("[RAND_FAIL] idx=%0d fmt=%0d rm=%0d a=0x%016h b=0x%016h result exp=0x%016h got=0x%016h nx exp=%0b got=%0b fflags=0x%02h",
+          $display("[RAND_FAIL] idx=%0d fmt=%0d rm=%0d a=0x%016h b=0x%016h result exp=0x%016h got=0x%016h flags exp=0x%02h got=0x%02h",
                    idx, fmt_bit, rm_bits, src_a, src_b,
-                   exp_result, resp_o.result, exp_nx,
-                   resp_o.fflags[FPU_FFLAG_NX], resp_o.fflags);
+                   exp_result, resp_o.result, exp_fflags, resp_o.fflags);
           random_print_cnt++;
-        end
-      end
-    end
-  endtask
-
-  task automatic run_subnormal_vec(input int unsigned idx);
-    logic          fmt_bit;
-    logic [2:0]    rm_bits;
-    fpu_data_t     src_a;
-    fpu_data_t     src_b;
-    fpu_data_t     exp_result;
-    logic          exp_nx;
-    fpu_req_t      req;
-    int unsigned   waited;
-    logic          result_match;
-    logic          nx_match;
-
-    {fmt_bit, rm_bits, src_a, src_b, exp_result, exp_nx} = subnormal_vec[idx];
-    req          = make_req(vec_fmt(fmt_bit), vec_rm(rm_bits),
-                            src_a, src_b, 8'he0 + idx[7:0]);
-    waited       = 0;
-    result_match = 1'b0;
-    nx_match     = 1'b0;
-
-    subnormal_count_by_fmt_rm[fmt_bit][rm_bits]++;
-
-    while (!ready_o) begin
-      @(posedge clk_i);
-      #1;
-    end
-
-    @(posedge clk_i);
-    #1;
-    req_i   = req;
-    valid_i = 1'b1;
-    @(posedge clk_i);
-    #1;
-    valid_i = 1'b0;
-    req_i   = '0;
-
-    while (!valid_o && waited < TIMEOUT_CYCLES) begin
-      @(posedge clk_i);
-      #1;
-      waited++;
-    end
-
-    if (!valid_o) begin
-      subnormal_timeout_cnt++;
-      fail_cnt++;
-      if (subnormal_print_cnt < RANDOM_PRINT_LIMIT) begin
-        $display("[SUBN_TIMEOUT] idx=%0d fmt=%0d rm=%0d a=0x%016h b=0x%016h",
-                 idx, fmt_bit, rm_bits, src_a, src_b);
-        subnormal_print_cnt++;
-      end
-    end else begin
-      result_match = (resp_o.result === exp_result);
-      nx_match     = (resp_o.fflags[FPU_FFLAG_NX] === exp_nx);
-
-      if (result_match && nx_match) begin
-        subnormal_pass_cnt++;
-      end
-      if (!result_match) begin
-        subnormal_result_fail_cnt++;
-        subnormal_result_fail_by_fmt_rm[fmt_bit][rm_bits]++;
-      end
-      if (!nx_match) begin
-        subnormal_nx_fail_cnt++;
-        subnormal_nx_fail_by_fmt_rm[fmt_bit][rm_bits]++;
-      end
-      if (!result_match || !nx_match) begin
-        fail_cnt++;
-        if (subnormal_print_cnt < RANDOM_PRINT_LIMIT) begin
-          $display("[SUBN_FAIL] idx=%0d fmt=%0d rm=%0d a=0x%016h b=0x%016h result exp=0x%016h got=0x%016h nx exp=%0b got=%0b fflags=0x%02h",
-                   idx, fmt_bit, rm_bits, src_a, src_b,
-                   exp_result, resp_o.result, exp_nx,
-                   resp_o.fflags[FPU_FFLAG_NX], resp_o.fflags);
-          subnormal_print_cnt++;
         end
       end
     end
@@ -497,25 +420,6 @@ module tb_fpu_div_pipe;
                  fmt_idx, rm_idx, random_count_by_fmt_rm[fmt_idx][rm_idx],
                  random_result_fail_by_fmt_rm[fmt_idx][rm_idx],
                  random_nx_fail_by_fmt_rm[fmt_idx][rm_idx]);
-      end
-    end
-  endtask
-
-  task automatic run_subnormal_vectors;
-    $readmemh("../tb/fpu_div_subnormal_cases.mem", subnormal_vec);
-    for (int unsigned idx = 0; idx < SUBNORMAL_VEC_COUNT; idx++) begin
-      run_subnormal_vec(idx);
-    end
-
-    $display("tb_fpu_div_pipe subnormal random summary: total=%0d pass=%0d result_fail=%0d nx_fail=%0d timeout=%0d",
-             SUBNORMAL_VEC_COUNT, subnormal_pass_cnt, subnormal_result_fail_cnt,
-             subnormal_nx_fail_cnt, subnormal_timeout_cnt);
-    for (int unsigned fmt_idx = 0; fmt_idx < 2; fmt_idx++) begin
-      for (int unsigned rm_idx = 0; rm_idx < 5; rm_idx++) begin
-        $display("tb_fpu_div_pipe subnormal bucket fmt=%0d rm=%0d count=%0d result_fail=%0d nx_fail=%0d",
-                 fmt_idx, rm_idx, subnormal_count_by_fmt_rm[fmt_idx][rm_idx],
-                 subnormal_result_fail_by_fmt_rm[fmt_idx][rm_idx],
-                 subnormal_nx_fail_by_fmt_rm[fmt_idx][rm_idx]);
       end
     end
   endtask
@@ -763,7 +667,6 @@ module tb_fpu_div_pipe;
 
     run_burst6();
     run_random_vectors();
-    run_subnormal_vectors();
 
     repeat (4) @(posedge clk_i);
 

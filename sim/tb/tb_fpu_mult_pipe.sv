@@ -3,8 +3,10 @@
 module tb_fpu_mult_pipe;
   import fpu_pkg::*;
 
-  localparam int unsigned NUM_CASES    = 256;
+  localparam int unsigned NUM_CASES    = 10000;
   localparam int unsigned DRAIN_CYCLES = 4;
+
+  typedef logic [201:0] mult_vec_t;
 
   logic      clk_i;
   logic      rst_ni;
@@ -25,10 +27,14 @@ module tb_fpu_mult_pipe;
   fpu_resp_t exp_resp_0;
   fpu_resp_t exp_resp_1;
   fpu_resp_t exp_resp_2;
+  fpu_resp_t issue_exp_resp;
+  logic      issue_exp_valid_op;
 
   int unsigned pass_cnt;
   int unsigned fail_cnt;
   int unsigned cycle_cnt;
+
+  mult_vec_t random_vec [NUM_CASES];
 
   fpu_mult_unit u_ref (
     .req_i     (req_i),
@@ -178,10 +184,10 @@ module tb_fpu_mult_pipe;
       exp_valid_0    <= valid_i;
       exp_valid_1    <= exp_valid_0;
       exp_valid_2    <= exp_valid_1;
-      exp_valid_op_0 <= ref_valid_op_o;
+      exp_valid_op_0 <= issue_exp_valid_op;
       exp_valid_op_1 <= exp_valid_op_0;
       exp_valid_op_2 <= exp_valid_op_1;
-      exp_resp_0     <= ref_resp_o;
+      exp_resp_0     <= issue_exp_resp;
       exp_resp_1     <= exp_resp_0;
       exp_resp_2     <= exp_resp_1;
     end
@@ -219,6 +225,8 @@ module tb_fpu_mult_pipe;
     rst_ni    = 1'b0;
     valid_i   = 1'b0;
     req_i     = '0;
+    issue_exp_resp = '0;
+    issue_exp_valid_op = 1'b0;
     pass_cnt  = 0;
     fail_cnt  = 0;
     cycle_cnt = 0;
@@ -227,17 +235,53 @@ module tb_fpu_mult_pipe;
     #1;
     rst_ni = 1'b1;
 
+    $readmemh("../tb/fpu_mult_random_cases.mem", random_vec);
+
     for (int unsigned case_idx = 0; case_idx < NUM_CASES; case_idx++) begin
+      logic        fmt_bit;
+      logic [2:0]  rm_bits;
+      fpu_data_t   src_a;
+      fpu_data_t   src_b;
+      fpu_data_t   exp_result;
+      fpu_fflags_t exp_fflags;
+      logic        exp_valid_op;
+
+      {fmt_bit, rm_bits, src_a, src_b, exp_result, exp_fflags, exp_valid_op} = random_vec[case_idx];
+
       @(posedge clk_i);
       #1;
-      valid_i = (case_idx[3:0] != 4'd7);
-      req_i   = make_req(case_idx);
+      valid_i = 1'b1;
+      req_i   = '0;
+      req_i.op      = FPU_OP_MUL;
+      req_i.rs_fmt  = fmt_bit ? FPU_FMT_D : FPU_FMT_S;
+      req_i.dst_fmt = req_i.rs_fmt;
+      unique case (rm_bits)
+        3'd0: req_i.rm = FPU_RM_RNE;
+        3'd1: req_i.rm = FPU_RM_RTZ;
+        3'd2: req_i.rm = FPU_RM_RDN;
+        3'd3: req_i.rm = FPU_RM_RUP;
+        3'd4: req_i.rm = FPU_RM_RMM;
+        default: req_i.rm = FPU_RM_RNE;
+      endcase
+      req_i.src_a = src_a;
+      req_i.src_b = src_b;
+      req_i.tag   = case_idx[7:0];
+      req_i.rd    = case_idx[4:0];
+
+      issue_exp_valid_op = exp_valid_op;
+      issue_exp_resp = '0;
+      issue_exp_resp.result = exp_result;
+      issue_exp_resp.fflags = exp_fflags;
+      issue_exp_resp.tag    = case_idx[7:0];
+      issue_exp_resp.rd     = case_idx[4:0];
     end
 
     @(posedge clk_i);
     #1;
     valid_i = 1'b0;
     req_i   = '0;
+    issue_exp_valid_op = 1'b0;
+    issue_exp_resp = '0;
 
     repeat (DRAIN_CYCLES) @(posedge clk_i);
 

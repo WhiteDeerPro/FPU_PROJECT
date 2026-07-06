@@ -1,14 +1,17 @@
 //============================================================================
-// Reciprocal-square-root initial seed LUT.
+// Reciprocal-square-root initial seed LUT with linear 3-term slope correction.
 //
 // sig_hi_i is the leading 12 bits of a normalized significand in [1, 2).
 // exp_odd_i selects the sqrt mantissa domain:
 //   0: seed approximates 1/sqrt(m)
 //   1: seed approximates 1/sqrt(2*m)
 //
-// The table stores 512 segment-center Q1.15 bases. Low address bits are
-// intentionally ignored; NR refinement in the sqrt pipe removes the residual
-// seed error while keeping this LUT compact.
+// The table stores 512 segment bases plus a sparse signed-digit slope. The
+// low 3 address bits are multiplied by that slope using at most three
+// shifted partial products; those products and the base are compressed with
+// a 4:2 compressor and one final carry-propagate add.
+//
+// mant_seed_o is Q1.15. Table search bound: max_abs_err=1 LSB, max_rel_err=0.000060554681.
 //============================================================================
 
 module fpu_rsqrt_seed_lut #(
@@ -21,535 +24,581 @@ module fpu_rsqrt_seed_lut #(
   output logic [15:0]               norm_mant_seed_o
 );
 
-  logic       addr_valid;
-  logic [8:0] seg_idx;
+  logic        addr_valid;
+  logic [8:0]  seg_idx;
+  logic [2:0]  seg_n;
   logic [15:0] base_seed;
+  logic [2:0]  term_neg;
+  logic [3:0]  term_shift [3];
+  logic [17:0] n_ext;
+  logic [17:0] term_mag [3];
+  logic [17:0] term_pp  [3];
+  logic [17:0] base_pp;
+  logic [17:0] comp_sum;
+  logic [17:0] comp_carry;
+  logic [17:0] comp_cout;
+  logic [17:0] seed_sum_mod;
 
   assign addr_valid = sig_hi_i[11];
   assign seg_idx    = {exp_odd_i, sig_hi_i[10:3]};
+  assign seg_n      = sig_hi_i[2:0];
 
   always_comb begin
-    base_seed = 16'h8000;
+    base_seed     = 16'h8000;
+    term_neg      = 3'b000;
+    term_shift[0] = 4'd15;
+    term_shift[1] = 4'd15;
+    term_shift[2] = 4'd15;
+
     if (addr_valid) begin
       unique case (seg_idx)
-        9'h000: base_seed = 16'd32736;
-        9'h001: base_seed = 16'd32672;
-        9'h002: base_seed = 16'd32609;
-        9'h003: base_seed = 16'd32546;
-        9'h004: base_seed = 16'd32484;
-        9'h005: base_seed = 16'd32422;
-        9'h006: base_seed = 16'd32360;
-        9'h007: base_seed = 16'd32298;
-        9'h008: base_seed = 16'd32237;
-        9'h009: base_seed = 16'd32176;
-        9'h00a: base_seed = 16'd32116;
-        9'h00b: base_seed = 16'd32056;
-        9'h00c: base_seed = 16'd31996;
-        9'h00d: base_seed = 16'd31937;
-        9'h00e: base_seed = 16'd31878;
-        9'h00f: base_seed = 16'd31819;
-        9'h010: base_seed = 16'd31760;
-        9'h011: base_seed = 16'd31702;
-        9'h012: base_seed = 16'd31645;
-        9'h013: base_seed = 16'd31587;
-        9'h014: base_seed = 16'd31530;
-        9'h015: base_seed = 16'd31473;
-        9'h016: base_seed = 16'd31416;
-        9'h017: base_seed = 16'd31360;
-        9'h018: base_seed = 16'd31304;
-        9'h019: base_seed = 16'd31249;
-        9'h01a: base_seed = 16'd31193;
-        9'h01b: base_seed = 16'd31138;
-        9'h01c: base_seed = 16'd31083;
-        9'h01d: base_seed = 16'd31029;
-        9'h01e: base_seed = 16'd30975;
-        9'h01f: base_seed = 16'd30921;
-        9'h020: base_seed = 16'd30867;
-        9'h021: base_seed = 16'd30814;
-        9'h022: base_seed = 16'd30761;
-        9'h023: base_seed = 16'd30708;
-        9'h024: base_seed = 16'd30655;
-        9'h025: base_seed = 16'd30603;
-        9'h026: base_seed = 16'd30551;
-        9'h027: base_seed = 16'd30499;
-        9'h028: base_seed = 16'd30448;
-        9'h029: base_seed = 16'd30397;
-        9'h02a: base_seed = 16'd30346;
-        9'h02b: base_seed = 16'd30295;
-        9'h02c: base_seed = 16'd30245;
-        9'h02d: base_seed = 16'd30194;
-        9'h02e: base_seed = 16'd30144;
-        9'h02f: base_seed = 16'd30095;
-        9'h030: base_seed = 16'd30045;
-        9'h031: base_seed = 16'd29996;
-        9'h032: base_seed = 16'd29947;
-        9'h033: base_seed = 16'd29898;
-        9'h034: base_seed = 16'd29850;
-        9'h035: base_seed = 16'd29802;
-        9'h036: base_seed = 16'd29754;
-        9'h037: base_seed = 16'd29706;
-        9'h038: base_seed = 16'd29658;
-        9'h039: base_seed = 16'd29611;
-        9'h03a: base_seed = 16'd29564;
-        9'h03b: base_seed = 16'd29517;
-        9'h03c: base_seed = 16'd29470;
-        9'h03d: base_seed = 16'd29424;
-        9'h03e: base_seed = 16'd29378;
-        9'h03f: base_seed = 16'd29332;
-        9'h040: base_seed = 16'd29286;
-        9'h041: base_seed = 16'd29240;
-        9'h042: base_seed = 16'd29195;
-        9'h043: base_seed = 16'd29150;
-        9'h044: base_seed = 16'd29105;
-        9'h045: base_seed = 16'd29060;
-        9'h046: base_seed = 16'd29015;
-        9'h047: base_seed = 16'd28971;
-        9'h048: base_seed = 16'd28927;
-        9'h049: base_seed = 16'd28883;
-        9'h04a: base_seed = 16'd28839;
-        9'h04b: base_seed = 16'd28796;
-        9'h04c: base_seed = 16'd28752;
-        9'h04d: base_seed = 16'd28709;
-        9'h04e: base_seed = 16'd28666;
-        9'h04f: base_seed = 16'd28624;
-        9'h050: base_seed = 16'd28581;
-        9'h051: base_seed = 16'd28539;
-        9'h052: base_seed = 16'd28496;
-        9'h053: base_seed = 16'd28454;
-        9'h054: base_seed = 16'd28413;
-        9'h055: base_seed = 16'd28371;
-        9'h056: base_seed = 16'd28330;
-        9'h057: base_seed = 16'd28288;
-        9'h058: base_seed = 16'd28247;
-        9'h059: base_seed = 16'd28206;
-        9'h05a: base_seed = 16'd28166;
-        9'h05b: base_seed = 16'd28125;
-        9'h05c: base_seed = 16'd28085;
-        9'h05d: base_seed = 16'd28044;
-        9'h05e: base_seed = 16'd28004;
-        9'h05f: base_seed = 16'd27965;
-        9'h060: base_seed = 16'd27925;
-        9'h061: base_seed = 16'd27885;
-        9'h062: base_seed = 16'd27846;
-        9'h063: base_seed = 16'd27807;
-        9'h064: base_seed = 16'd27768;
-        9'h065: base_seed = 16'd27729;
-        9'h066: base_seed = 16'd27690;
-        9'h067: base_seed = 16'd27652;
-        9'h068: base_seed = 16'd27613;
-        9'h069: base_seed = 16'd27575;
-        9'h06a: base_seed = 16'd27537;
-        9'h06b: base_seed = 16'd27499;
-        9'h06c: base_seed = 16'd27461;
-        9'h06d: base_seed = 16'd27424;
-        9'h06e: base_seed = 16'd27386;
-        9'h06f: base_seed = 16'd27349;
-        9'h070: base_seed = 16'd27312;
-        9'h071: base_seed = 16'd27275;
-        9'h072: base_seed = 16'd27238;
-        9'h073: base_seed = 16'd27201;
-        9'h074: base_seed = 16'd27165;
-        9'h075: base_seed = 16'd27128;
-        9'h076: base_seed = 16'd27092;
-        9'h077: base_seed = 16'd27056;
-        9'h078: base_seed = 16'd27020;
-        9'h079: base_seed = 16'd26984;
-        9'h07a: base_seed = 16'd26949;
-        9'h07b: base_seed = 16'd26913;
-        9'h07c: base_seed = 16'd26878;
-        9'h07d: base_seed = 16'd26842;
-        9'h07e: base_seed = 16'd26807;
-        9'h07f: base_seed = 16'd26772;
-        9'h080: base_seed = 16'd26738;
-        9'h081: base_seed = 16'd26703;
-        9'h082: base_seed = 16'd26668;
-        9'h083: base_seed = 16'd26634;
-        9'h084: base_seed = 16'd26600;
-        9'h085: base_seed = 16'd26565;
-        9'h086: base_seed = 16'd26531;
-        9'h087: base_seed = 16'd26497;
-        9'h088: base_seed = 16'd26464;
-        9'h089: base_seed = 16'd26430;
-        9'h08a: base_seed = 16'd26397;
-        9'h08b: base_seed = 16'd26363;
-        9'h08c: base_seed = 16'd26330;
-        9'h08d: base_seed = 16'd26297;
-        9'h08e: base_seed = 16'd26264;
-        9'h08f: base_seed = 16'd26231;
-        9'h090: base_seed = 16'd26198;
-        9'h091: base_seed = 16'd26165;
-        9'h092: base_seed = 16'd26133;
-        9'h093: base_seed = 16'd26100;
-        9'h094: base_seed = 16'd26068;
-        9'h095: base_seed = 16'd26036;
-        9'h096: base_seed = 16'd26004;
-        9'h097: base_seed = 16'd25972;
-        9'h098: base_seed = 16'd25940;
-        9'h099: base_seed = 16'd25909;
-        9'h09a: base_seed = 16'd25877;
-        9'h09b: base_seed = 16'd25846;
-        9'h09c: base_seed = 16'd25814;
-        9'h09d: base_seed = 16'd25783;
-        9'h09e: base_seed = 16'd25752;
-        9'h09f: base_seed = 16'd25721;
-        9'h0a0: base_seed = 16'd25690;
-        9'h0a1: base_seed = 16'd25659;
-        9'h0a2: base_seed = 16'd25628;
-        9'h0a3: base_seed = 16'd25598;
-        9'h0a4: base_seed = 16'd25567;
-        9'h0a5: base_seed = 16'd25537;
-        9'h0a6: base_seed = 16'd25507;
-        9'h0a7: base_seed = 16'd25477;
-        9'h0a8: base_seed = 16'd25447;
-        9'h0a9: base_seed = 16'd25417;
-        9'h0aa: base_seed = 16'd25387;
-        9'h0ab: base_seed = 16'd25357;
-        9'h0ac: base_seed = 16'd25328;
-        9'h0ad: base_seed = 16'd25298;
-        9'h0ae: base_seed = 16'd25269;
-        9'h0af: base_seed = 16'd25239;
-        9'h0b0: base_seed = 16'd25210;
-        9'h0b1: base_seed = 16'd25181;
-        9'h0b2: base_seed = 16'd25152;
-        9'h0b3: base_seed = 16'd25123;
-        9'h0b4: base_seed = 16'd25094;
-        9'h0b5: base_seed = 16'd25066;
-        9'h0b6: base_seed = 16'd25037;
-        9'h0b7: base_seed = 16'd25009;
-        9'h0b8: base_seed = 16'd24980;
-        9'h0b9: base_seed = 16'd24952;
-        9'h0ba: base_seed = 16'd24924;
-        9'h0bb: base_seed = 16'd24896;
-        9'h0bc: base_seed = 16'd24868;
-        9'h0bd: base_seed = 16'd24840;
-        9'h0be: base_seed = 16'd24812;
-        9'h0bf: base_seed = 16'd24784;
-        9'h0c0: base_seed = 16'd24756;
-        9'h0c1: base_seed = 16'd24729;
-        9'h0c2: base_seed = 16'd24701;
-        9'h0c3: base_seed = 16'd24674;
-        9'h0c4: base_seed = 16'd24647;
-        9'h0c5: base_seed = 16'd24620;
-        9'h0c6: base_seed = 16'd24593;
-        9'h0c7: base_seed = 16'd24566;
-        9'h0c8: base_seed = 16'd24539;
-        9'h0c9: base_seed = 16'd24512;
-        9'h0ca: base_seed = 16'd24485;
-        9'h0cb: base_seed = 16'd24458;
-        9'h0cc: base_seed = 16'd24432;
-        9'h0cd: base_seed = 16'd24405;
-        9'h0ce: base_seed = 16'd24379;
-        9'h0cf: base_seed = 16'd24353;
-        9'h0d0: base_seed = 16'd24326;
-        9'h0d1: base_seed = 16'd24300;
-        9'h0d2: base_seed = 16'd24274;
-        9'h0d3: base_seed = 16'd24248;
-        9'h0d4: base_seed = 16'd24222;
-        9'h0d5: base_seed = 16'd24196;
-        9'h0d6: base_seed = 16'd24171;
-        9'h0d7: base_seed = 16'd24145;
-        9'h0d8: base_seed = 16'd24120;
-        9'h0d9: base_seed = 16'd24094;
-        9'h0da: base_seed = 16'd24069;
-        9'h0db: base_seed = 16'd24043;
-        9'h0dc: base_seed = 16'd24018;
-        9'h0dd: base_seed = 16'd23993;
-        9'h0de: base_seed = 16'd23968;
-        9'h0df: base_seed = 16'd23943;
-        9'h0e0: base_seed = 16'd23918;
-        9'h0e1: base_seed = 16'd23893;
-        9'h0e2: base_seed = 16'd23868;
-        9'h0e3: base_seed = 16'd23844;
-        9'h0e4: base_seed = 16'd23819;
-        9'h0e5: base_seed = 16'd23794;
-        9'h0e6: base_seed = 16'd23770;
-        9'h0e7: base_seed = 16'd23746;
-        9'h0e8: base_seed = 16'd23721;
-        9'h0e9: base_seed = 16'd23697;
-        9'h0ea: base_seed = 16'd23673;
-        9'h0eb: base_seed = 16'd23649;
-        9'h0ec: base_seed = 16'd23625;
-        9'h0ed: base_seed = 16'd23601;
-        9'h0ee: base_seed = 16'd23577;
-        9'h0ef: base_seed = 16'd23553;
-        9'h0f0: base_seed = 16'd23529;
-        9'h0f1: base_seed = 16'd23506;
-        9'h0f2: base_seed = 16'd23482;
-        9'h0f3: base_seed = 16'd23459;
-        9'h0f4: base_seed = 16'd23435;
-        9'h0f5: base_seed = 16'd23412;
-        9'h0f6: base_seed = 16'd23388;
-        9'h0f7: base_seed = 16'd23365;
-        9'h0f8: base_seed = 16'd23342;
-        9'h0f9: base_seed = 16'd23319;
-        9'h0fa: base_seed = 16'd23296;
-        9'h0fb: base_seed = 16'd23273;
-        9'h0fc: base_seed = 16'd23250;
-        9'h0fd: base_seed = 16'd23227;
-        9'h0fe: base_seed = 16'd23204;
-        9'h0ff: base_seed = 16'd23182;
-        9'h100: base_seed = 16'd23148;
-        9'h101: base_seed = 16'd23103;
-        9'h102: base_seed = 16'd23058;
-        9'h103: base_seed = 16'd23014;
-        9'h104: base_seed = 16'd22969;
-        9'h105: base_seed = 16'd22926;
-        9'h106: base_seed = 16'd22882;
-        9'h107: base_seed = 16'd22838;
-        9'h108: base_seed = 16'd22795;
-        9'h109: base_seed = 16'd22752;
-        9'h10a: base_seed = 16'd22709;
-        9'h10b: base_seed = 16'd22667;
-        9'h10c: base_seed = 16'd22625;
-        9'h10d: base_seed = 16'd22583;
-        9'h10e: base_seed = 16'd22541;
-        9'h10f: base_seed = 16'd22499;
-        9'h110: base_seed = 16'd22458;
-        9'h111: base_seed = 16'd22417;
-        9'h112: base_seed = 16'd22376;
-        9'h113: base_seed = 16'd22335;
-        9'h114: base_seed = 16'd22295;
-        9'h115: base_seed = 16'd22255;
-        9'h116: base_seed = 16'd22215;
-        9'h117: base_seed = 16'd22175;
-        9'h118: base_seed = 16'd22135;
-        9'h119: base_seed = 16'd22096;
-        9'h11a: base_seed = 16'd22057;
-        9'h11b: base_seed = 16'd22018;
-        9'h11c: base_seed = 16'd21979;
-        9'h11d: base_seed = 16'd21941;
-        9'h11e: base_seed = 16'd21902;
-        9'h11f: base_seed = 16'd21864;
-        9'h120: base_seed = 16'd21826;
-        9'h121: base_seed = 16'd21789;
-        9'h122: base_seed = 16'd21751;
-        9'h123: base_seed = 16'd21714;
-        9'h124: base_seed = 16'd21677;
-        9'h125: base_seed = 16'd21640;
-        9'h126: base_seed = 16'd21603;
-        9'h127: base_seed = 16'd21566;
-        9'h128: base_seed = 16'd21530;
-        9'h129: base_seed = 16'd21494;
-        9'h12a: base_seed = 16'd21458;
-        9'h12b: base_seed = 16'd21422;
-        9'h12c: base_seed = 16'd21386;
-        9'h12d: base_seed = 16'd21351;
-        9'h12e: base_seed = 16'd21315;
-        9'h12f: base_seed = 16'd21280;
-        9'h130: base_seed = 16'd21245;
-        9'h131: base_seed = 16'd21210;
-        9'h132: base_seed = 16'd21176;
-        9'h133: base_seed = 16'd21141;
-        9'h134: base_seed = 16'd21107;
-        9'h135: base_seed = 16'd21073;
-        9'h136: base_seed = 16'd21039;
-        9'h137: base_seed = 16'd21005;
-        9'h138: base_seed = 16'd20972;
-        9'h139: base_seed = 16'd20938;
-        9'h13a: base_seed = 16'd20905;
-        9'h13b: base_seed = 16'd20872;
-        9'h13c: base_seed = 16'd20839;
-        9'h13d: base_seed = 16'd20806;
-        9'h13e: base_seed = 16'd20773;
-        9'h13f: base_seed = 16'd20741;
-        9'h140: base_seed = 16'd20708;
-        9'h141: base_seed = 16'd20676;
-        9'h142: base_seed = 16'd20644;
-        9'h143: base_seed = 16'd20612;
-        9'h144: base_seed = 16'd20580;
-        9'h145: base_seed = 16'd20548;
-        9'h146: base_seed = 16'd20517;
-        9'h147: base_seed = 16'd20486;
-        9'h148: base_seed = 16'd20454;
-        9'h149: base_seed = 16'd20423;
-        9'h14a: base_seed = 16'd20392;
-        9'h14b: base_seed = 16'd20362;
-        9'h14c: base_seed = 16'd20331;
-        9'h14d: base_seed = 16'd20301;
-        9'h14e: base_seed = 16'd20270;
-        9'h14f: base_seed = 16'd20240;
-        9'h150: base_seed = 16'd20210;
-        9'h151: base_seed = 16'd20180;
-        9'h152: base_seed = 16'd20150;
-        9'h153: base_seed = 16'd20120;
-        9'h154: base_seed = 16'd20091;
-        9'h155: base_seed = 16'd20061;
-        9'h156: base_seed = 16'd20032;
-        9'h157: base_seed = 16'd20003;
-        9'h158: base_seed = 16'd19974;
-        9'h159: base_seed = 16'd19945;
-        9'h15a: base_seed = 16'd19916;
-        9'h15b: base_seed = 16'd19887;
-        9'h15c: base_seed = 16'd19859;
-        9'h15d: base_seed = 16'd19830;
-        9'h15e: base_seed = 16'd19802;
-        9'h15f: base_seed = 16'd19774;
-        9'h160: base_seed = 16'd19746;
-        9'h161: base_seed = 16'd19718;
-        9'h162: base_seed = 16'd19690;
-        9'h163: base_seed = 16'd19662;
-        9'h164: base_seed = 16'd19635;
-        9'h165: base_seed = 16'd19607;
-        9'h166: base_seed = 16'd19580;
-        9'h167: base_seed = 16'd19553;
-        9'h168: base_seed = 16'd19526;
-        9'h169: base_seed = 16'd19498;
-        9'h16a: base_seed = 16'd19472;
-        9'h16b: base_seed = 16'd19445;
-        9'h16c: base_seed = 16'd19418;
-        9'h16d: base_seed = 16'd19391;
-        9'h16e: base_seed = 16'd19365;
-        9'h16f: base_seed = 16'd19339;
-        9'h170: base_seed = 16'd19312;
-        9'h171: base_seed = 16'd19286;
-        9'h172: base_seed = 16'd19260;
-        9'h173: base_seed = 16'd19234;
-        9'h174: base_seed = 16'd19208;
-        9'h175: base_seed = 16'd19183;
-        9'h176: base_seed = 16'd19157;
-        9'h177: base_seed = 16'd19132;
-        9'h178: base_seed = 16'd19106;
-        9'h179: base_seed = 16'd19081;
-        9'h17a: base_seed = 16'd19056;
-        9'h17b: base_seed = 16'd19030;
-        9'h17c: base_seed = 16'd19005;
-        9'h17d: base_seed = 16'd18980;
-        9'h17e: base_seed = 16'd18956;
-        9'h17f: base_seed = 16'd18931;
-        9'h180: base_seed = 16'd18906;
-        9'h181: base_seed = 16'd18882;
-        9'h182: base_seed = 16'd18857;
-        9'h183: base_seed = 16'd18833;
-        9'h184: base_seed = 16'd18809;
-        9'h185: base_seed = 16'd18785;
-        9'h186: base_seed = 16'd18760;
-        9'h187: base_seed = 16'd18737;
-        9'h188: base_seed = 16'd18713;
-        9'h189: base_seed = 16'd18689;
-        9'h18a: base_seed = 16'd18665;
-        9'h18b: base_seed = 16'd18642;
-        9'h18c: base_seed = 16'd18618;
-        9'h18d: base_seed = 16'd18595;
-        9'h18e: base_seed = 16'd18571;
-        9'h18f: base_seed = 16'd18548;
-        9'h190: base_seed = 16'd18525;
-        9'h191: base_seed = 16'd18502;
-        9'h192: base_seed = 16'd18479;
-        9'h193: base_seed = 16'd18456;
-        9'h194: base_seed = 16'd18433;
-        9'h195: base_seed = 16'd18410;
-        9'h196: base_seed = 16'd18388;
-        9'h197: base_seed = 16'd18365;
-        9'h198: base_seed = 16'd18343;
-        9'h199: base_seed = 16'd18320;
-        9'h19a: base_seed = 16'd18298;
-        9'h19b: base_seed = 16'd18276;
-        9'h19c: base_seed = 16'd18253;
-        9'h19d: base_seed = 16'd18231;
-        9'h19e: base_seed = 16'd18209;
-        9'h19f: base_seed = 16'd18187;
-        9'h1a0: base_seed = 16'd18166;
-        9'h1a1: base_seed = 16'd18144;
-        9'h1a2: base_seed = 16'd18122;
-        9'h1a3: base_seed = 16'd18100;
-        9'h1a4: base_seed = 16'd18079;
-        9'h1a5: base_seed = 16'd18057;
-        9'h1a6: base_seed = 16'd18036;
-        9'h1a7: base_seed = 16'd18015;
-        9'h1a8: base_seed = 16'd17994;
-        9'h1a9: base_seed = 16'd17972;
-        9'h1aa: base_seed = 16'd17951;
-        9'h1ab: base_seed = 16'd17930;
-        9'h1ac: base_seed = 16'd17909;
-        9'h1ad: base_seed = 16'd17888;
-        9'h1ae: base_seed = 16'd17868;
-        9'h1af: base_seed = 16'd17847;
-        9'h1b0: base_seed = 16'd17826;
-        9'h1b1: base_seed = 16'd17806;
-        9'h1b2: base_seed = 16'd17785;
-        9'h1b3: base_seed = 16'd17765;
-        9'h1b4: base_seed = 16'd17744;
-        9'h1b5: base_seed = 16'd17724;
-        9'h1b6: base_seed = 16'd17704;
-        9'h1b7: base_seed = 16'd17684;
-        9'h1b8: base_seed = 16'd17664;
-        9'h1b9: base_seed = 16'd17644;
-        9'h1ba: base_seed = 16'd17624;
-        9'h1bb: base_seed = 16'd17604;
-        9'h1bc: base_seed = 16'd17584;
-        9'h1bd: base_seed = 16'd17564;
-        9'h1be: base_seed = 16'd17545;
-        9'h1bf: base_seed = 16'd17525;
-        9'h1c0: base_seed = 16'd17505;
-        9'h1c1: base_seed = 16'd17486;
-        9'h1c2: base_seed = 16'd17467;
-        9'h1c3: base_seed = 16'd17447;
-        9'h1c4: base_seed = 16'd17428;
-        9'h1c5: base_seed = 16'd17409;
-        9'h1c6: base_seed = 16'd17390;
-        9'h1c7: base_seed = 16'd17370;
-        9'h1c8: base_seed = 16'd17351;
-        9'h1c9: base_seed = 16'd17332;
-        9'h1ca: base_seed = 16'd17314;
-        9'h1cb: base_seed = 16'd17295;
-        9'h1cc: base_seed = 16'd17276;
-        9'h1cd: base_seed = 16'd17257;
-        9'h1ce: base_seed = 16'd17238;
-        9'h1cf: base_seed = 16'd17220;
-        9'h1d0: base_seed = 16'd17201;
-        9'h1d1: base_seed = 16'd17183;
-        9'h1d2: base_seed = 16'd17164;
-        9'h1d3: base_seed = 16'd17146;
-        9'h1d4: base_seed = 16'd17128;
-        9'h1d5: base_seed = 16'd17109;
-        9'h1d6: base_seed = 16'd17091;
-        9'h1d7: base_seed = 16'd17073;
-        9'h1d8: base_seed = 16'd17055;
-        9'h1d9: base_seed = 16'd17037;
-        9'h1da: base_seed = 16'd17019;
-        9'h1db: base_seed = 16'd17001;
-        9'h1dc: base_seed = 16'd16983;
-        9'h1dd: base_seed = 16'd16966;
-        9'h1de: base_seed = 16'd16948;
-        9'h1df: base_seed = 16'd16930;
-        9'h1e0: base_seed = 16'd16913;
-        9'h1e1: base_seed = 16'd16895;
-        9'h1e2: base_seed = 16'd16877;
-        9'h1e3: base_seed = 16'd16860;
-        9'h1e4: base_seed = 16'd16843;
-        9'h1e5: base_seed = 16'd16825;
-        9'h1e6: base_seed = 16'd16808;
-        9'h1e7: base_seed = 16'd16791;
-        9'h1e8: base_seed = 16'd16773;
-        9'h1e9: base_seed = 16'd16756;
-        9'h1ea: base_seed = 16'd16739;
-        9'h1eb: base_seed = 16'd16722;
-        9'h1ec: base_seed = 16'd16705;
-        9'h1ed: base_seed = 16'd16688;
-        9'h1ee: base_seed = 16'd16671;
-        9'h1ef: base_seed = 16'd16655;
-        9'h1f0: base_seed = 16'd16638;
-        9'h1f1: base_seed = 16'd16621;
-        9'h1f2: base_seed = 16'd16604;
-        9'h1f3: base_seed = 16'd16588;
-        9'h1f4: base_seed = 16'd16571;
-        9'h1f5: base_seed = 16'd16555;
-        9'h1f6: base_seed = 16'd16538;
-        9'h1f7: base_seed = 16'd16522;
-        9'h1f8: base_seed = 16'd16505;
-        9'h1f9: base_seed = 16'd16489;
-        9'h1fa: base_seed = 16'd16473;
-        9'h1fb: base_seed = 16'd16456;
-        9'h1fc: base_seed = 16'd16440;
-        9'h1fd: base_seed = 16'd16424;
-        9'h1fe: base_seed = 16'd16408;
-        9'h1ff: base_seed = 16'd16392;
+        9'h000: begin base_seed = 16'd32768; term_neg = 3'b110; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd5; end
+        9'h001: begin base_seed = 16'd32704; term_neg = 3'b110; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd5; end
+        9'h002: begin base_seed = 16'd32641; term_neg = 3'b110; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd5; end
+        9'h003: begin base_seed = 16'd32578; term_neg = 3'b110; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd5; end
+        9'h004: begin base_seed = 16'd32515; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd10; term_shift[2] = 4'd11; end
+        9'h005: begin base_seed = 16'd32453; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd10; term_shift[2] = 4'd11; end
+        9'h006: begin base_seed = 16'd32391; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd10; term_shift[2] = 4'd11; end
+        9'h007: begin base_seed = 16'd32329; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h008: begin base_seed = 16'd32267; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h009: begin base_seed = 16'd32206; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h00a: begin base_seed = 16'd32146; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h00b: begin base_seed = 16'd32086; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd9; term_shift[2] = 4'd11; end
+        9'h00c: begin base_seed = 16'd32026; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h00d: begin base_seed = 16'd31967; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd9; term_shift[2] = 4'd11; end
+        9'h00e: begin base_seed = 16'd31907; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h00f: begin base_seed = 16'd31849; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h010: begin base_seed = 16'd31789; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h011: begin base_seed = 16'd31731; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h012: begin base_seed = 16'd31673; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h013: begin base_seed = 16'd31615; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd8; end
+        9'h014: begin base_seed = 16'd31558; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd8; end
+        9'h015: begin base_seed = 16'd31501; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd8; end
+        9'h016: begin base_seed = 16'd31445; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h017: begin base_seed = 16'd31388; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd8; end
+        9'h018: begin base_seed = 16'd31332; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd8; end
+        9'h019: begin base_seed = 16'd31276; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h01a: begin base_seed = 16'd31221; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd8; end
+        9'h01b: begin base_seed = 16'd31166; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd8; end
+        9'h01c: begin base_seed = 16'd31111; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h01d: begin base_seed = 16'd31057; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd8; end
+        9'h01e: begin base_seed = 16'd31002; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h01f: begin base_seed = 16'd30948; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h020: begin base_seed = 16'd30895; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd8; end
+        9'h021: begin base_seed = 16'd30840; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h022: begin base_seed = 16'd30787; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h023: begin base_seed = 16'd30734; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h024: begin base_seed = 16'd30681; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h025: begin base_seed = 16'd30629; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h026: begin base_seed = 16'd30577; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h027: begin base_seed = 16'd30525; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h028: begin base_seed = 16'd30474; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h029: begin base_seed = 16'd30422; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h02a: begin base_seed = 16'd30371; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h02b: begin base_seed = 16'd30321; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h02c: begin base_seed = 16'd30269; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd10; end
+        9'h02d: begin base_seed = 16'd30219; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd10; end
+        9'h02e: begin base_seed = 16'd30169; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd10; end
+        9'h02f: begin base_seed = 16'd30119; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd7; end
+        9'h030: begin base_seed = 16'd30070; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd10; end
+        9'h031: begin base_seed = 16'd30020; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd7; end
+        9'h032: begin base_seed = 16'd29971; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd7; end
+        9'h033: begin base_seed = 16'd29923; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd10; end
+        9'h034: begin base_seed = 16'd29874; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd7; end
+        9'h035: begin base_seed = 16'd29826; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd7; end
+        9'h036: begin base_seed = 16'd29778; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd7; end
+        9'h037: begin base_seed = 16'd29730; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd7; end
+        9'h038: begin base_seed = 16'd29682; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd7; end
+        9'h039: begin base_seed = 16'd29635; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd7; end
+        9'h03a: begin base_seed = 16'd29588; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd7; end
+        9'h03b: begin base_seed = 16'd29541; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd7; end
+        9'h03c: begin base_seed = 16'd29494; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd7; end
+        9'h03d: begin base_seed = 16'd29447; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd10; end
+        9'h03e: begin base_seed = 16'd29401; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd10; end
+        9'h03f: begin base_seed = 16'd29355; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd10; end
+        9'h040: begin base_seed = 16'd29309; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd10; end
+        9'h041: begin base_seed = 16'd29264; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd7; end
+        9'h042: begin base_seed = 16'd29217; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h043: begin base_seed = 16'd29172; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h044: begin base_seed = 16'd29127; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h045: begin base_seed = 16'd29082; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h046: begin base_seed = 16'd29037; term_neg = 3'b111; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h047: begin base_seed = 16'd28993; term_neg = 3'b111; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h048: begin base_seed = 16'd28949; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h049: begin base_seed = 16'd28905; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h04a: begin base_seed = 16'd28861; term_neg = 3'b111; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h04b: begin base_seed = 16'd28818; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h04c: begin base_seed = 16'd28774; term_neg = 3'b111; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h04d: begin base_seed = 16'd28731; term_neg = 3'b111; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h04e: begin base_seed = 16'd28688; term_neg = 3'b111; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h04f: begin base_seed = 16'd28646; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h050: begin base_seed = 16'd28603; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h051: begin base_seed = 16'd28559; term_neg = 3'b111; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h052: begin base_seed = 16'd28517; term_neg = 3'b111; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h053: begin base_seed = 16'd28475; term_neg = 3'b111; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h054: begin base_seed = 16'd28433; term_neg = 3'b111; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h055: begin base_seed = 16'd28391; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h056: begin base_seed = 16'd28350; term_neg = 3'b111; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h057: begin base_seed = 16'd28309; term_neg = 3'b111; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h058: begin base_seed = 16'd28267; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h059: begin base_seed = 16'd28226; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h05a: begin base_seed = 16'd28186; term_neg = 3'b111; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h05b: begin base_seed = 16'd28145; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h05c: begin base_seed = 16'd28105; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h05d: begin base_seed = 16'd28064; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h05e: begin base_seed = 16'd28024; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h05f: begin base_seed = 16'd27984; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h060: begin base_seed = 16'd27945; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h061: begin base_seed = 16'd27905; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h062: begin base_seed = 16'd27866; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h063: begin base_seed = 16'd27827; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h064: begin base_seed = 16'd27787; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h065: begin base_seed = 16'd27749; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h066: begin base_seed = 16'd27710; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h067: begin base_seed = 16'd27671; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h068: begin base_seed = 16'd27633; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h069: begin base_seed = 16'd27595; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h06a: begin base_seed = 16'd27556; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h06b: begin base_seed = 16'd27519; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h06c: begin base_seed = 16'd27479; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h06d: begin base_seed = 16'd27442; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h06e: begin base_seed = 16'd27404; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h06f: begin base_seed = 16'd27367; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h070: begin base_seed = 16'd27330; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h071: begin base_seed = 16'd27293; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h072: begin base_seed = 16'd27256; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h073: begin base_seed = 16'd27219; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h074: begin base_seed = 16'd27183; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h075: begin base_seed = 16'd27146; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h076: begin base_seed = 16'd27110; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h077: begin base_seed = 16'd27074; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h078: begin base_seed = 16'd27038; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h079: begin base_seed = 16'd27002; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h07a: begin base_seed = 16'd26967; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h07b: begin base_seed = 16'd26931; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h07c: begin base_seed = 16'd26896; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h07d: begin base_seed = 16'd26860; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h07e: begin base_seed = 16'd26825; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h07f: begin base_seed = 16'd26790; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h080: begin base_seed = 16'd26755; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h081: begin base_seed = 16'd26720; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h082: begin base_seed = 16'd26686; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h083: begin base_seed = 16'd26651; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h084: begin base_seed = 16'd26616; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h085: begin base_seed = 16'd26582; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h086: begin base_seed = 16'd26548; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h087: begin base_seed = 16'd26514; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h088: begin base_seed = 16'd26480; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h089: begin base_seed = 16'd26447; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h08a: begin base_seed = 16'd26413; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h08b: begin base_seed = 16'd26379; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h08c: begin base_seed = 16'd26346; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h08d: begin base_seed = 16'd26313; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h08e: begin base_seed = 16'd26280; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h08f: begin base_seed = 16'd26247; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h090: begin base_seed = 16'd26214; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h091: begin base_seed = 16'd26182; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h092: begin base_seed = 16'd26149; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h093: begin base_seed = 16'd26117; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h094: begin base_seed = 16'd26084; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h095: begin base_seed = 16'd26052; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h096: begin base_seed = 16'd26020; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h097: begin base_seed = 16'd25988; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h098: begin base_seed = 16'd25956; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h099: begin base_seed = 16'd25924; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h09a: begin base_seed = 16'd25893; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h09b: begin base_seed = 16'd25861; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h09c: begin base_seed = 16'd25830; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h09d: begin base_seed = 16'd25799; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h09e: begin base_seed = 16'd25768; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h09f: begin base_seed = 16'd25737; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h0a0: begin base_seed = 16'd25706; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h0a1: begin base_seed = 16'd25675; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h0a2: begin base_seed = 16'd25644; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h0a3: begin base_seed = 16'd25614; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h0a4: begin base_seed = 16'd25583; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h0a5: begin base_seed = 16'd25552; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h0a6: begin base_seed = 16'd25522; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h0a7: begin base_seed = 16'd25492; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h0a8: begin base_seed = 16'd25462; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h0a9: begin base_seed = 16'd25432; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h0aa: begin base_seed = 16'd25402; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h0ab: begin base_seed = 16'd25372; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h0ac: begin base_seed = 16'd25342; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h0ad: begin base_seed = 16'd25313; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h0ae: begin base_seed = 16'd25283; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h0af: begin base_seed = 16'd25254; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h0b0: begin base_seed = 16'd25225; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h0b1: begin base_seed = 16'd25195; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h0b2: begin base_seed = 16'd25166; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h0b3: begin base_seed = 16'd25137; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h0b4: begin base_seed = 16'd25109; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h0b5: begin base_seed = 16'd25080; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h0b6: begin base_seed = 16'd25051; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h0b7: begin base_seed = 16'd25023; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h0b8: begin base_seed = 16'd24994; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h0b9: begin base_seed = 16'd24966; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h0ba: begin base_seed = 16'd24938; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h0bb: begin base_seed = 16'd24910; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h0bc: begin base_seed = 16'd24882; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h0bd: begin base_seed = 16'd24854; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h0be: begin base_seed = 16'd24826; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h0bf: begin base_seed = 16'd24798; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h0c0: begin base_seed = 16'd24770; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h0c1: begin base_seed = 16'd24743; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h0c2: begin base_seed = 16'd24715; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h0c3: begin base_seed = 16'd24688; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h0c4: begin base_seed = 16'd24661; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h0c5: begin base_seed = 16'd24634; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h0c6: begin base_seed = 16'd24607; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h0c7: begin base_seed = 16'd24580; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h0c8: begin base_seed = 16'd24553; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h0c9: begin base_seed = 16'd24526; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h0ca: begin base_seed = 16'd24499; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h0cb: begin base_seed = 16'd24472; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h0cc: begin base_seed = 16'd24446; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h0cd: begin base_seed = 16'd24419; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h0ce: begin base_seed = 16'd24391; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0cf: begin base_seed = 16'd24365; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h0d0: begin base_seed = 16'd24339; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h0d1: begin base_seed = 16'd24313; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h0d2: begin base_seed = 16'd24287; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h0d3: begin base_seed = 16'd24261; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h0d4: begin base_seed = 16'd24235; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h0d5: begin base_seed = 16'd24209; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h0d6: begin base_seed = 16'd24183; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0d7: begin base_seed = 16'd24158; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h0d8: begin base_seed = 16'd24132; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h0d9: begin base_seed = 16'd24106; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0da: begin base_seed = 16'd24081; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h0db: begin base_seed = 16'd24056; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h0dc: begin base_seed = 16'd24030; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0dd: begin base_seed = 16'd24005; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0de: begin base_seed = 16'd23980; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0df: begin base_seed = 16'd23955; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0e0: begin base_seed = 16'd23930; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0e1: begin base_seed = 16'd23905; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0e2: begin base_seed = 16'd23880; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0e3: begin base_seed = 16'd23856; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0e4: begin base_seed = 16'd23831; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0e5: begin base_seed = 16'd23807; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h0e6: begin base_seed = 16'd23782; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0e7: begin base_seed = 16'd23758; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0e8: begin base_seed = 16'd23733; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0e9: begin base_seed = 16'd23709; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0ea: begin base_seed = 16'd23685; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0eb: begin base_seed = 16'd23661; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0ec: begin base_seed = 16'd23637; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0ed: begin base_seed = 16'd23613; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0ee: begin base_seed = 16'd23589; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0ef: begin base_seed = 16'd23565; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0f0: begin base_seed = 16'd23541; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0f1: begin base_seed = 16'd23518; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0f2: begin base_seed = 16'd23494; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0f3: begin base_seed = 16'd23470; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h0f4: begin base_seed = 16'd23447; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0f5: begin base_seed = 16'd23424; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0f6: begin base_seed = 16'd23400; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h0f7: begin base_seed = 16'd23377; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0f8: begin base_seed = 16'd23354; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0f9: begin base_seed = 16'd23331; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0fa: begin base_seed = 16'd23308; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0fb: begin base_seed = 16'd23285; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0fc: begin base_seed = 16'd23262; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0fd: begin base_seed = 16'd23239; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h0fe: begin base_seed = 16'd23216; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h0ff: begin base_seed = 16'd23193; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h100: begin base_seed = 16'd23170; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h101: begin base_seed = 16'd23125; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h102: begin base_seed = 16'd23080; term_neg = 3'b111; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h103: begin base_seed = 16'd23036; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h104: begin base_seed = 16'd22992; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h105: begin base_seed = 16'd22948; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h106: begin base_seed = 16'd22904; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h107: begin base_seed = 16'd22860; term_neg = 3'b111; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h108: begin base_seed = 16'd22817; term_neg = 3'b111; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h109: begin base_seed = 16'd22774; term_neg = 3'b111; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h10a: begin base_seed = 16'd22731; term_neg = 3'b111; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h10b: begin base_seed = 16'd22689; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h10c: begin base_seed = 16'd22647; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h10d: begin base_seed = 16'd22603; term_neg = 3'b111; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h10e: begin base_seed = 16'd22561; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h10f: begin base_seed = 16'd22520; term_neg = 3'b111; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h110: begin base_seed = 16'd22478; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h111: begin base_seed = 16'd22437; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h112: begin base_seed = 16'd22396; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h113: begin base_seed = 16'd22356; term_neg = 3'b111; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h114: begin base_seed = 16'd22315; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h115: begin base_seed = 16'd22275; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h116: begin base_seed = 16'd22235; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h117: begin base_seed = 16'd22195; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h118: begin base_seed = 16'd22155; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h119: begin base_seed = 16'd22116; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h11a: begin base_seed = 16'd22077; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h11b: begin base_seed = 16'd22038; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h11c: begin base_seed = 16'd21999; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h11d: begin base_seed = 16'd21960; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h11e: begin base_seed = 16'd21922; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h11f: begin base_seed = 16'd21884; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h120: begin base_seed = 16'd21846; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h121: begin base_seed = 16'd21808; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h122: begin base_seed = 16'd21769; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h123: begin base_seed = 16'd21732; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h124: begin base_seed = 16'd21695; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h125: begin base_seed = 16'd21658; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h126: begin base_seed = 16'd21621; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h127: begin base_seed = 16'd21584; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h128: begin base_seed = 16'd21548; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h129: begin base_seed = 16'd21512; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h12a: begin base_seed = 16'd21476; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h12b: begin base_seed = 16'd21440; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h12c: begin base_seed = 16'd21404; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h12d: begin base_seed = 16'd21369; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h12e: begin base_seed = 16'd21333; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h12f: begin base_seed = 16'd21298; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h130: begin base_seed = 16'd21263; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h131: begin base_seed = 16'd21228; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h132: begin base_seed = 16'd21193; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h133: begin base_seed = 16'd21159; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h134: begin base_seed = 16'd21124; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h135: begin base_seed = 16'd21090; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h136: begin base_seed = 16'd21056; term_neg = 3'b110; term_shift[0] = 4'd6; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h137: begin base_seed = 16'd21022; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h138: begin base_seed = 16'd20988; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h139: begin base_seed = 16'd20954; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h13a: begin base_seed = 16'd20921; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h13b: begin base_seed = 16'd20888; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h13c: begin base_seed = 16'd20855; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h13d: begin base_seed = 16'd20822; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h13e: begin base_seed = 16'd20789; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h13f: begin base_seed = 16'd20757; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h140: begin base_seed = 16'd20724; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h141: begin base_seed = 16'd20692; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h142: begin base_seed = 16'd20660; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h143: begin base_seed = 16'd20628; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h144: begin base_seed = 16'd20596; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h145: begin base_seed = 16'd20564; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h146: begin base_seed = 16'd20533; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h147: begin base_seed = 16'd20501; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h148: begin base_seed = 16'd20470; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h149: begin base_seed = 16'd20439; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd6; end
+        9'h14a: begin base_seed = 16'd20408; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h14b: begin base_seed = 16'd20377; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h14c: begin base_seed = 16'd20346; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h14d: begin base_seed = 16'd20316; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h14e: begin base_seed = 16'd20285; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h14f: begin base_seed = 16'd20255; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h150: begin base_seed = 16'd20225; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h151: begin base_seed = 16'd20195; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h152: begin base_seed = 16'd20165; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h153: begin base_seed = 16'd20135; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h154: begin base_seed = 16'd20106; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd10; end
+        9'h155: begin base_seed = 16'd20076; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h156: begin base_seed = 16'd20047; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h157: begin base_seed = 16'd20017; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h158: begin base_seed = 16'd19988; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h159: begin base_seed = 16'd19959; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h15a: begin base_seed = 16'd19930; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h15b: begin base_seed = 16'd19902; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h15c: begin base_seed = 16'd19873; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h15d: begin base_seed = 16'd19844; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h15e: begin base_seed = 16'd19816; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h15f: begin base_seed = 16'd19788; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h160: begin base_seed = 16'd19760; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h161: begin base_seed = 16'd19732; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h162: begin base_seed = 16'd19704; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h163: begin base_seed = 16'd19676; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h164: begin base_seed = 16'd19649; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h165: begin base_seed = 16'd19621; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h166: begin base_seed = 16'd19594; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h167: begin base_seed = 16'd19567; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h168: begin base_seed = 16'd19540; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h169: begin base_seed = 16'd19512; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h16a: begin base_seed = 16'd19486; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h16b: begin base_seed = 16'd19459; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h16c: begin base_seed = 16'd19432; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h16d: begin base_seed = 16'd19404; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h16e: begin base_seed = 16'd19379; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h16f: begin base_seed = 16'd19353; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd9; end
+        9'h170: begin base_seed = 16'd19325; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h171: begin base_seed = 16'd19299; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h172: begin base_seed = 16'd19273; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h173: begin base_seed = 16'd19247; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h174: begin base_seed = 16'd19221; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h175: begin base_seed = 16'd19195; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h176: begin base_seed = 16'd19169; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h177: begin base_seed = 16'd19144; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h178: begin base_seed = 16'd19118; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h179: begin base_seed = 16'd19093; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h17a: begin base_seed = 16'd19068; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h17b: begin base_seed = 16'd19043; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h17c: begin base_seed = 16'd19018; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h17d: begin base_seed = 16'd18993; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h17e: begin base_seed = 16'd18968; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h17f: begin base_seed = 16'd18943; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h180: begin base_seed = 16'd18918; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h181: begin base_seed = 16'd18894; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h182: begin base_seed = 16'd18869; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h183: begin base_seed = 16'd18845; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h184: begin base_seed = 16'd18821; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h185: begin base_seed = 16'd18797; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h186: begin base_seed = 16'd18773; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h187: begin base_seed = 16'd18749; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h188: begin base_seed = 16'd18725; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h189: begin base_seed = 16'd18701; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h18a: begin base_seed = 16'd18677; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h18b: begin base_seed = 16'd18653; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h18c: begin base_seed = 16'd18630; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h18d: begin base_seed = 16'd18606; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h18e: begin base_seed = 16'd18583; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h18f: begin base_seed = 16'd18560; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h190: begin base_seed = 16'd18537; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h191: begin base_seed = 16'd18513; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h192: begin base_seed = 16'd18490; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h193: begin base_seed = 16'd18468; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h194: begin base_seed = 16'd18445; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h195: begin base_seed = 16'd18422; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h196: begin base_seed = 16'd18399; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h197: begin base_seed = 16'd18377; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h198: begin base_seed = 16'd18354; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h199: begin base_seed = 16'd18332; term_neg = 3'b100; term_shift[0] = 4'd5; term_shift[1] = 4'd6; term_shift[2] = 4'd8; end
+        9'h19a: begin base_seed = 16'd18309; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h19b: begin base_seed = 16'd18287; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h19c: begin base_seed = 16'd18265; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h19d: begin base_seed = 16'd18243; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h19e: begin base_seed = 16'd18221; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h19f: begin base_seed = 16'd18199; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h1a0: begin base_seed = 16'd18177; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h1a1: begin base_seed = 16'd18155; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h1a2: begin base_seed = 16'd18132; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h1a3: begin base_seed = 16'd18112; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd10; end
+        9'h1a4: begin base_seed = 16'd18089; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h1a5: begin base_seed = 16'd18067; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h1a6: begin base_seed = 16'd18046; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h1a7: begin base_seed = 16'd18025; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h1a8: begin base_seed = 16'd18004; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h1a9: begin base_seed = 16'd17982; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h1aa: begin base_seed = 16'd17961; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h1ab: begin base_seed = 16'd17940; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h1ac: begin base_seed = 16'd17919; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h1ad: begin base_seed = 16'd17898; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h1ae: begin base_seed = 16'd17878; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h1af: begin base_seed = 16'd17857; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h1b0: begin base_seed = 16'd17836; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h1b1: begin base_seed = 16'd17816; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h1b2: begin base_seed = 16'd17795; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h1b3: begin base_seed = 16'd17775; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h1b4: begin base_seed = 16'd17754; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h1b5: begin base_seed = 16'd17734; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h1b6: begin base_seed = 16'd17714; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h1b7: begin base_seed = 16'd17694; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h1b8: begin base_seed = 16'd17674; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h1b9: begin base_seed = 16'd17654; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h1ba: begin base_seed = 16'd17634; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h1bb: begin base_seed = 16'd17614; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h1bc: begin base_seed = 16'd17594; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h1bd: begin base_seed = 16'd17574; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h1be: begin base_seed = 16'd17555; term_neg = 3'b100; term_shift[0] = 4'd6; term_shift[1] = 4'd8; term_shift[2] = 4'd9; end
+        9'h1bf: begin base_seed = 16'd17535; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h1c0: begin base_seed = 16'd17515; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h1c1: begin base_seed = 16'd17496; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h1c2: begin base_seed = 16'd17476; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h1c3: begin base_seed = 16'd17457; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h1c4: begin base_seed = 16'd17438; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h1c5: begin base_seed = 16'd17418; term_neg = 3'b110; term_shift[0] = 4'd7; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h1c6: begin base_seed = 16'd17399; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h1c7: begin base_seed = 16'd17380; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h1c8: begin base_seed = 16'd17361; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h1c9: begin base_seed = 16'd17342; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h1ca: begin base_seed = 16'd17323; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h1cb: begin base_seed = 16'd17304; term_neg = 3'b110; term_shift[0] = 4'd7; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h1cc: begin base_seed = 16'd17285; term_neg = 3'b110; term_shift[0] = 4'd7; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h1cd: begin base_seed = 16'd17267; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h1ce: begin base_seed = 16'd17248; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h1cf: begin base_seed = 16'd17229; term_neg = 3'b110; term_shift[0] = 4'd7; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h1d0: begin base_seed = 16'd17211; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd9; end
+        9'h1d1: begin base_seed = 16'd17192; term_neg = 3'b110; term_shift[0] = 4'd7; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h1d2: begin base_seed = 16'd17173; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd10; end
+        9'h1d3: begin base_seed = 16'd17155; term_neg = 3'b110; term_shift[0] = 4'd7; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h1d4: begin base_seed = 16'd17137; term_neg = 3'b110; term_shift[0] = 4'd7; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h1d5: begin base_seed = 16'd17118; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd10; end
+        9'h1d6: begin base_seed = 16'd17100; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd10; end
+        9'h1d7: begin base_seed = 16'd17082; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd10; end
+        9'h1d8: begin base_seed = 16'd17064; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd10; end
+        9'h1d9: begin base_seed = 16'd17046; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd10; end
+        9'h1da: begin base_seed = 16'd17028; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd10; end
+        9'h1db: begin base_seed = 16'd17010; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd10; end
+        9'h1dc: begin base_seed = 16'd16992; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd10; end
+        9'h1dd: begin base_seed = 16'd16974; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd10; end
+        9'h1de: begin base_seed = 16'd16957; term_neg = 3'b110; term_shift[0] = 4'd7; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h1df: begin base_seed = 16'd16939; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd10; end
+        9'h1e0: begin base_seed = 16'd16921; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd10; end
+        9'h1e1: begin base_seed = 16'd16904; term_neg = 3'b110; term_shift[0] = 4'd7; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h1e2: begin base_seed = 16'd16886; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd10; end
+        9'h1e3: begin base_seed = 16'd16869; term_neg = 3'b110; term_shift[0] = 4'd7; term_shift[1] = 4'd9; term_shift[2] = 4'd10; end
+        9'h1e4: begin base_seed = 16'd16851; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd10; end
+        9'h1e5: begin base_seed = 16'd16834; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd10; end
+        9'h1e6: begin base_seed = 16'd16816; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd7; end
+        9'h1e7: begin base_seed = 16'd16799; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd7; end
+        9'h1e8: begin base_seed = 16'd16782; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd10; end
+        9'h1e9: begin base_seed = 16'd16765; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd10; end
+        9'h1ea: begin base_seed = 16'd16747; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd7; end
+        9'h1eb: begin base_seed = 16'd16730; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd7; end
+        9'h1ec: begin base_seed = 16'd16713; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd7; end
+        9'h1ed: begin base_seed = 16'd16696; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd7; end
+        9'h1ee: begin base_seed = 16'd16680; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd10; end
+        9'h1ef: begin base_seed = 16'd16663; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd10; end
+        9'h1f0: begin base_seed = 16'd16646; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd7; end
+        9'h1f1: begin base_seed = 16'd16629; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd7; end
+        9'h1f2: begin base_seed = 16'd16613; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd10; end
+        9'h1f3: begin base_seed = 16'd16596; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd7; end
+        9'h1f4: begin base_seed = 16'd16579; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd7; end
+        9'h1f5: begin base_seed = 16'd16563; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd7; end
+        9'h1f6: begin base_seed = 16'd16546; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd7; end
+        9'h1f7: begin base_seed = 16'd16530; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd7; end
+        9'h1f8: begin base_seed = 16'd16513; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd7; end
+        9'h1f9: begin base_seed = 16'd16497; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd7; end
+        9'h1fa: begin base_seed = 16'd16481; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd7; end
+        9'h1fb: begin base_seed = 16'd16465; term_neg = 3'b101; term_shift[0] = 4'd6; term_shift[1] = 4'd7; term_shift[2] = 4'd10; end
+        9'h1fc: begin base_seed = 16'd16448; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd7; end
+        9'h1fd: begin base_seed = 16'd16432; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd7; end
+        9'h1fe: begin base_seed = 16'd16416; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd7; end
+        9'h1ff: begin base_seed = 16'd16400; term_neg = 3'b101; term_shift[0] = 4'd5; term_shift[1] = 4'd5; term_shift[2] = 4'd7; end
         default: begin end
       endcase
     end
   end
 
-  assign mant_seed_o = addr_valid ? base_seed : 16'h8000;
+  assign n_ext   = {7'd0, seg_n, 8'd0};
+  assign base_pp = {2'd0, base_seed};
+
+  generate
+    for (genvar term_idx = 0; term_idx < 3; term_idx++) begin : gen_terms
+      assign term_mag[term_idx] = n_ext >> term_shift[term_idx];
+      assign term_pp[term_idx]  = term_neg[2-term_idx] ?
+                                  (~term_mag[term_idx] + 18'd1) :
+                                  term_mag[term_idx];
+    end
+  endgenerate
+
+  fpu_compressor_4_2 #(
+    .WIDTH(18)
+  ) u_seed_compress (
+    .a_i    (base_pp),
+    .b_i    (term_pp[0]),
+    .c_i    (term_pp[1]),
+    .d_i    (term_pp[2]),
+    .cin_i  (18'd0),
+    .sum_o  (comp_sum),
+    .carry_o(comp_carry),
+    .cout_o (comp_cout)
+  );
+
+  assign seed_sum_mod = comp_sum +
+                        {comp_carry[16:0], 1'b0} +
+                        {comp_cout[16:0], 1'b0};
+
+  assign mant_seed_o = addr_valid ? seed_sum_mod[15:0] : 16'h8000;
 
   always_comb begin
     if (mant_seed_o[15]) begin

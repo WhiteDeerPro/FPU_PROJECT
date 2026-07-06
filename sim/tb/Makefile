@@ -30,7 +30,7 @@ VCS_FLAGS := -sverilog \
 SIM_FLAGS := +fsdb+autoflush +fsdb+all +fsdb+struct +fsdb+mda +max_cycles=$(MAX_CYCLES)
 
 # --- Targets ----------------------------------------------------------------
-.PHONY: all compile run verdi verdi_sch clean rerun lop recip_seed_lut mult_trig mult_trig_verdi mult_trig_rerun convert convert_pipe convert_verdi convert_rerun add add_pipe add_verdi add_rerun mult mult_pipe mult_pipe_common mult_verdi mult_rerun fma fma_cases fma_pipe fma_verdi fma_rerun div_cases div_pipe div_verdi div_rerun sqrt_pipe sqrt_verdi sqrt_rerun top_compile sgnj sgnj_verdi sgnj_rerun compare compare_pipe compare_verdi compare_rerun
+.PHONY: all compile run verdi verdi_sch clean rerun lop recip_seed_lut mult_trig mult_trig_verdi mult_trig_rerun convert convert_pipe convert_verdi convert_rerun add add_pipe add_verdi add_rerun mult mult_cases mult_pipe mult_pipe_common mult_verdi mult_rerun fma fma_cases fma_pipe fma_verdi fma_rerun div_cases div_pipe div_verdi div_rerun sqrt_cases sqrt_pipe sqrt_verdi sqrt_rerun top_compile sgnj sgnj_verdi sgnj_rerun compare compare_pipe compare_verdi compare_rerun
 
 all: clean compile run
 
@@ -103,7 +103,10 @@ add_rerun: add
 mult:
 	$(MAKE) rerun FLIST=fpu_mult_vcs.f TOP=tb_fpu_mult FSDB_FILE=tb_fpu_mult.fsdb
 
-mult_pipe:
+mult_cases:
+	python3 gen_fpu_mult_random_cases.py
+
+mult_pipe: mult_cases
 	$(MAKE) rerun FLIST=fpu_mult_pipe_vcs.f TOP=tb_fpu_mult_pipe FSDB_FILE=tb_fpu_mult_pipe.fsdb
 
 mult_pipe_common:
@@ -126,7 +129,7 @@ fma_verdi:
 fma_rerun: fma
 
 fma_cases:
-	python3 gen_fpu_fma_subnormal_cases.py
+	python3 gen_fpu_fma_random_cases.py
 
 div_pipe: div_cases
 	$(MAKE) rerun FLIST=fpu_div_pipe_vcs.f TOP=tb_fpu_div_pipe FSDB_FILE=tb_fpu_div_pipe.fsdb MAX_CYCLES=200000
@@ -136,7 +139,10 @@ div_verdi:
 
 div_rerun: div_pipe
 
-sqrt_pipe:
+sqrt_cases:
+	python3 gen_fpu_sqrt_random_cases.py
+
+sqrt_pipe: sqrt_cases
 	$(MAKE) rerun FLIST=fpu_sqrt_pipe_vcs.f TOP=tb_fpu_sqrt_pipe FSDB_FILE=tb_fpu_sqrt_pipe.fsdb MAX_CYCLES=50000
 
 sqrt_verdi:
