@@ -20,6 +20,8 @@ ucli.key
 .gitrepo/
 FPU_PROJECT_github_key
 FPU_PROJECT_github_key.pub
+FPU_PROJECT_key2
+FPU_PROJECT_key2.pub
 *.tmp
 *.bak
 *~
