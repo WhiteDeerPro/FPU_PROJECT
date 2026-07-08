@@ -18,6 +18,8 @@ ucli.key
 
 # Common temporary files
 .gitrepo/
+FPU_PROJECT_github_key
+FPU_PROJECT_github_key.pub
 *.tmp
 *.bak
 *~
