@@ -55,6 +55,12 @@ finite nonzero `A/A`. Some exact quotient samples can raise `NX`, and RTZ/RDN
 can produce one ulp below `1.0`; random div vectors avoid raw identical
 operands until the final residual/exactness path is fixed.
 
+## Authors
+
+- WhiteDeerPro <1207707136@qq.com>
+- 10kyfu <2194438514@qq.com>
+- strive2021 <xiligongda@outlook.com>
+
 ## License
 
 This project is licensed under the MIT License. See [LICENSE](LICENSE).
