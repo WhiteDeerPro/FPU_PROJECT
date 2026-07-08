@@ -6,20 +6,33 @@ module tb_fpu_rsqrt_seed_lut;
 
   logic [11:0]        sig_hi_i;
   logic               exp_odd_i;
-  logic [15:0]        mant_seed_o;
-  logic signed [15:0] norm_exp_seed_o;
-  logic [15:0]        norm_mant_seed_o;
+  logic [15:0]        lut_mant_seed_o;
+  logic signed [15:0] lut_norm_exp_seed_o;
+  logic [15:0]        lut_norm_mant_seed_o;
+  logic [15:0]        scaled_mant_seed_o;
+  logic signed [15:0] scaled_norm_exp_seed_o;
+  logic [15:0]        scaled_norm_mant_seed_o;
 
   int unsigned errors;
-  int unsigned max_abs_err [2];
-  real         max_rel_err [2];
+  int unsigned max_abs_err [2][2];
+  real         max_rel_err [2][2];
 
-  fpu_rsqrt_seed_lut dut (
+  fpu_rsqrt_seed_lut dut_lut (
     .sig_hi_i        (sig_hi_i),
     .exp_odd_i       (exp_odd_i),
-    .mant_seed_o     (mant_seed_o),
-    .norm_exp_seed_o (norm_exp_seed_o),
-    .norm_mant_seed_o(norm_mant_seed_o)
+    .mant_seed_o     (lut_mant_seed_o),
+    .norm_exp_seed_o (lut_norm_exp_seed_o),
+    .norm_mant_seed_o(lut_norm_mant_seed_o)
+  );
+
+  fpu_rsqrt_seed_lut #(
+    .USE_ODD_SCALE(1'b1)
+  ) dut_scaled (
+    .sig_hi_i        (sig_hi_i),
+    .exp_odd_i       (exp_odd_i),
+    .mant_seed_o     (scaled_mant_seed_o),
+    .norm_exp_seed_o (scaled_norm_exp_seed_o),
+    .norm_mant_seed_o(scaled_norm_mant_seed_o)
   );
 
   function automatic real abs_real(input real value);
@@ -36,49 +49,67 @@ module tb_fpu_rsqrt_seed_lut;
     expected_seed = int'($floor(scaled + 0.5));
   endfunction
 
-  task automatic check_addr(input int unsigned addr, input bit exp_odd);
+  task automatic check_addr(
+    input int unsigned addr,
+    input bit          exp_odd,
+    input int unsigned mode,
+    input string       mode_name
+  );
     int unsigned exp_seed;
     int unsigned abs_err;
     real         exact;
     real         seed;
     real         rel_err;
+    logic [15:0]        mant_seed;
+    logic signed [15:0] norm_exp_seed;
+    logic [15:0]        norm_mant_seed;
 
     sig_hi_i  = addr[11:0];
     exp_odd_i = exp_odd;
     #1;
 
-    exp_seed = expected_seed(addr, exp_odd);
-    abs_err  = (mant_seed_o > exp_seed) ? (mant_seed_o - exp_seed) :
-                                          (exp_seed - mant_seed_o);
+    if (mode == 0) begin
+      mant_seed      = lut_mant_seed_o;
+      norm_exp_seed  = lut_norm_exp_seed_o;
+      norm_mant_seed = lut_norm_mant_seed_o;
+    end else begin
+      mant_seed      = scaled_mant_seed_o;
+      norm_exp_seed  = scaled_norm_exp_seed_o;
+      norm_mant_seed = scaled_norm_mant_seed_o;
+    end
 
-    if (abs_err > max_abs_err[exp_odd]) begin
-      max_abs_err[exp_odd] = abs_err;
+    exp_seed = expected_seed(addr, exp_odd);
+    abs_err  = (mant_seed > exp_seed) ? (mant_seed - exp_seed) :
+                                        (exp_seed - mant_seed);
+
+    if (abs_err > max_abs_err[mode][exp_odd]) begin
+      max_abs_err[mode][exp_odd] = abs_err;
     end
 
     exact   = real'(exp_seed) / 32768.0;
-    seed    = real'(mant_seed_o) / 32768.0;
+    seed    = real'(mant_seed) / 32768.0;
     rel_err = abs_real(seed - exact) / exact;
-    if (rel_err > max_rel_err[exp_odd]) begin
-      max_rel_err[exp_odd] = rel_err;
+    if (rel_err > max_rel_err[mode][exp_odd]) begin
+      max_rel_err[mode][exp_odd] = rel_err;
     end
 
     if (rel_err >= REL_ERR_LIMIT) begin
-      $display("[FAIL] exp_odd=%0b addr=0x%03h rel_err=%.12f limit=%.12f ideal=%0d got=%0d",
-               exp_odd, addr, rel_err, REL_ERR_LIMIT, exp_seed, mant_seed_o);
+      $display("[FAIL] %s exp_odd=%0b addr=0x%03h rel_err=%.12f limit=%.12f ideal=%0d got=%0d",
+               mode_name, exp_odd, addr, rel_err, REL_ERR_LIMIT, exp_seed, mant_seed);
       errors++;
     end
 
-    if (mant_seed_o[15]) begin
-      if (norm_mant_seed_o !== mant_seed_o || norm_exp_seed_o !== 16'sd0) begin
-        $display("[FAIL] normalized pass-through exp_odd=%0b addr=0x%03h",
-                 exp_odd, addr);
+    if (mant_seed[15]) begin
+      if (norm_mant_seed !== mant_seed || norm_exp_seed !== 16'sd0) begin
+        $display("[FAIL] %s normalized pass-through exp_odd=%0b addr=0x%03h",
+                 mode_name, exp_odd, addr);
         errors++;
       end
     end else begin
-      if (norm_mant_seed_o !== {mant_seed_o[14:0], 1'b0} ||
-          norm_exp_seed_o !== -16'sd1) begin
-        $display("[FAIL] normalized shift exp_odd=%0b addr=0x%03h",
-                 exp_odd, addr);
+      if (norm_mant_seed !== {mant_seed[14:0], 1'b0} ||
+          norm_exp_seed !== -16'sd1) begin
+        $display("[FAIL] %s normalized shift exp_odd=%0b addr=0x%03h",
+                 mode_name, exp_odd, addr);
         errors++;
       end
     end
@@ -94,40 +125,54 @@ module tb_fpu_rsqrt_seed_lut;
 `endif
 
     errors = 0;
-    max_abs_err[0] = 0;
-    max_abs_err[1] = 0;
-    max_rel_err[0] = 0.0;
-    max_rel_err[1] = 0.0;
+    for (int unsigned mode = 0; mode < 2; mode++) begin
+      max_abs_err[mode][0] = 0;
+      max_abs_err[mode][1] = 0;
+      max_rel_err[mode][0] = 0.0;
+      max_rel_err[mode][1] = 0.0;
+    end
 
     for (int unsigned addr = 12'h800; addr <= 12'hfff; addr++) begin
-      check_addr(addr, 1'b0);
-      check_addr(addr, 1'b1);
+      check_addr(addr, 1'b0, 0, "9bit_lut");
+      check_addr(addr, 1'b1, 0, "9bit_lut");
+      check_addr(addr, 1'b0, 1, "scaled");
+      check_addr(addr, 1'b1, 1, "scaled");
     end
 
     sig_hi_i  = 12'h001;
     exp_odd_i = 1'b0;
     #1;
-    if (mant_seed_o !== 16'h8000 ||
-        norm_mant_seed_o !== 16'h8000 ||
-        norm_exp_seed_o !== 16'sd0) begin
+    if (lut_mant_seed_o !== 16'h8000 ||
+        lut_norm_mant_seed_o !== 16'h8000 ||
+        lut_norm_exp_seed_o !== 16'sd0 ||
+        scaled_mant_seed_o !== 16'h8000 ||
+        scaled_norm_mant_seed_o !== 16'h8000 ||
+        scaled_norm_exp_seed_o !== 16'sd0) begin
       $display("[FAIL] default invalid-address behavior exp_odd=0");
       errors++;
     end
 
     exp_odd_i = 1'b1;
     #1;
-    if (mant_seed_o !== 16'h8000 ||
-        norm_mant_seed_o !== 16'h8000 ||
-        norm_exp_seed_o !== 16'sd0) begin
+    if (lut_mant_seed_o !== 16'h8000 ||
+        lut_norm_mant_seed_o !== 16'h8000 ||
+        lut_norm_exp_seed_o !== 16'sd0 ||
+        scaled_mant_seed_o !== 16'h8000 ||
+        scaled_norm_mant_seed_o !== 16'h8000 ||
+        scaled_norm_exp_seed_o !== 16'sd0) begin
       $display("[FAIL] default invalid-address behavior exp_odd=1");
       errors++;
     end
 
     if (errors == 0) begin
-      $display("[PASS] rsqrt seed LUT checked, exp_odd=0 max_abs_err=%0d max_rel_err=%.12f",
-               max_abs_err[0], max_rel_err[0]);
-      $display("[PASS] rsqrt seed LUT checked, exp_odd=1 max_abs_err=%0d max_rel_err=%.12f",
-               max_abs_err[1], max_rel_err[1]);
+      $display("[PASS] rsqrt seed LUT checked, mode=9bit_lut exp_odd=0 max_abs_err=%0d max_rel_err=%.12f",
+               max_abs_err[0][0], max_rel_err[0][0]);
+      $display("[PASS] rsqrt seed LUT checked, mode=9bit_lut exp_odd=1 max_abs_err=%0d max_rel_err=%.12f",
+               max_abs_err[0][1], max_rel_err[0][1]);
+      $display("[PASS] rsqrt seed LUT checked, mode=scaled exp_odd=0 max_abs_err=%0d max_rel_err=%.12f",
+               max_abs_err[1][0], max_rel_err[1][0]);
+      $display("[PASS] rsqrt seed LUT checked, mode=scaled exp_odd=1 max_abs_err=%0d max_rel_err=%.12f",
+               max_abs_err[1][1], max_rel_err[1][1]);
     end else begin
       $display("[FAIL] rsqrt seed LUT errors=%0d", errors);
       $fatal(1, "tb_fpu_rsqrt_seed_lut failed");
