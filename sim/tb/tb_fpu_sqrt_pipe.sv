@@ -8,7 +8,7 @@ module tb_fpu_sqrt_pipe;
   localparam int unsigned FMA_LATENCY = 5;
 
   localparam int unsigned TIMEOUT_CYCLES = 500;
-  localparam int unsigned SQRT_VEC_COUNT = 8200;
+  localparam int unsigned SQRT_VEC_COUNT = 10760;
   localparam int unsigned COS_SWEEP_POINTS = 720;
   localparam real         PI = 3.1415926535897932384626433832795;
 
@@ -91,6 +91,9 @@ module tb_fpu_sqrt_pipe;
   int unsigned vec_result_fail_cnt;
   int unsigned vec_timeout_cnt;
   int unsigned vec_print_cnt;
+  int unsigned vec_result_fail_by_fmt_rm [2][5];
+  int unsigned vec_timeout_by_fmt_rm     [2][5];
+  int unsigned vec_count_by_fmt_rm       [2][5];
 
   typedef logic [137:0] sqrt_vec_t;
   sqrt_vec_t sqrt_vec [SQRT_VEC_COUNT];
@@ -266,6 +269,7 @@ module tb_fpu_sqrt_pipe;
     {fmt_bit, rm_bits, src, exp_result, exp_fflags, exp_valid_op} = sqrt_vec[idx];
     req = make_req(fmt_bit ? FPU_FMT_D : FPU_FMT_S, rm_from_bits(rm_bits), src, idx);
     waited = 0;
+    vec_count_by_fmt_rm[fmt_bit][rm_bits]++;
 
     @(posedge clk_i);
     while (!ready_o) begin
@@ -285,6 +289,7 @@ module tb_fpu_sqrt_pipe;
 
     if (!valid_o) begin
       vec_timeout_cnt++;
+      vec_timeout_by_fmt_rm[fmt_bit][rm_bits]++;
       if (vec_print_cnt < 24) begin
         $display("[FAIL] sqrt_vec[%0d] timeout fmt=%0d rm=%0d src=0x%016h",
                  idx, fmt_bit, rm_bits, src);
@@ -294,6 +299,7 @@ module tb_fpu_sqrt_pipe;
                  (resp_o.result !== exp_result) ||
                  (resp_o.fflags !== exp_fflags)) begin
       vec_result_fail_cnt++;
+      vec_result_fail_by_fmt_rm[fmt_bit][rm_bits]++;
       if (vec_print_cnt < 24) begin
         $display("[FAIL] sqrt_vec[%0d] fmt=%0d rm=%0d src=0x%016h got=0x%016h flags=0x%02h valid_op=%0b exp=0x%016h flags=0x%02h valid_op=%0b",
                  idx, fmt_bit, rm_bits, src, resp_o.result, resp_o.fflags, valid_op_o,
@@ -313,6 +319,14 @@ module tb_fpu_sqrt_pipe;
 
     $display("tb_fpu_sqrt_pipe vector summary: total=%0d pass=%0d result_fail=%0d timeout=%0d",
              SQRT_VEC_COUNT, vec_pass_cnt, vec_result_fail_cnt, vec_timeout_cnt);
+    for (int unsigned fmt_idx = 0; fmt_idx < 2; fmt_idx++) begin
+      for (int unsigned rm_idx = 0; rm_idx < 5; rm_idx++) begin
+        $display("tb_fpu_sqrt_pipe vector bucket fmt=%0d rm=%0d count=%0d result_fail=%0d timeout=%0d",
+                 fmt_idx, rm_idx, vec_count_by_fmt_rm[fmt_idx][rm_idx],
+                 vec_result_fail_by_fmt_rm[fmt_idx][rm_idx],
+                 vec_timeout_by_fmt_rm[fmt_idx][rm_idx]);
+      end
+    end
     if ((vec_result_fail_cnt != 0) || (vec_timeout_cnt != 0)) begin
       fail_cnt += vec_result_fail_cnt + vec_timeout_cnt;
     end else begin
@@ -407,6 +421,13 @@ module tb_fpu_sqrt_pipe;
     vec_result_fail_cnt = 0;
     vec_timeout_cnt = 0;
     vec_print_cnt = 0;
+    for (int unsigned fmt_idx = 0; fmt_idx < 2; fmt_idx++) begin
+      for (int unsigned rm_idx = 0; rm_idx < 5; rm_idx++) begin
+        vec_result_fail_by_fmt_rm[fmt_idx][rm_idx] = 0;
+        vec_timeout_by_fmt_rm[fmt_idx][rm_idx] = 0;
+        vec_count_by_fmt_rm[fmt_idx][rm_idx] = 0;
+      end
+    end
 
     for (int unsigned idx = 0; idx < COS_SWEEP_POINTS; idx++) begin
       check_cos_identity_point(idx);
@@ -441,6 +462,17 @@ module tb_fpu_sqrt_pipe;
     cos_pass_cnt = 0;
     cos_fail_cnt = 0;
     cos_print_cnt = 0;
+    vec_pass_cnt = 0;
+    vec_result_fail_cnt = 0;
+    vec_timeout_cnt = 0;
+    vec_print_cnt = 0;
+    for (int unsigned fmt_idx = 0; fmt_idx < 2; fmt_idx++) begin
+      for (int unsigned rm_idx = 0; rm_idx < 5; rm_idx++) begin
+        vec_result_fail_by_fmt_rm[fmt_idx][rm_idx] = 0;
+        vec_timeout_by_fmt_rm[fmt_idx][rm_idx] = 0;
+        vec_count_by_fmt_rm[fmt_idx][rm_idx] = 0;
+      end
+    end
 
     repeat (5) @(posedge clk_i);
     rst_ni = 1'b1;

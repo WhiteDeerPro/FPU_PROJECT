@@ -172,10 +172,12 @@ Current pipe RTL lives under `rtl/units_pipe/`.
   `fpu_fma_unit_pipe` and `fpu_recip_seed_lut`. `ready_o` indicates whether a
   context slot is free. Finite divides work in normalized mantissa space rather
   than constructing a full IEEE `1/b`: seed `1/mb`, run Newton-Raphson
-  refinement, compute `q0 = ma*x`, form `r = ma - mb*q0`, finish with
-  `q = q0 + r*x`, then apply `exp(a)-exp(b)` while packing the final result.
-  This keeps reciprocal/FMA intermediates near [0.5, 2) and defers true
-  overflow/underflow handling to final result packing.
+  refinement (S: 1 round, D: 2 rounds), compute `q0 = ma*x`, form
+  `r = ma - mb*q0`, finish with `q = q0 + r*x`, then apply `exp(a)-exp(b)`.
+  Final pack runs an integer-domain residual exactness check against the
+  original operands, clearing false `NX/UF` and accepting exact one-ulp-neighbor
+  candidates. This keeps reciprocal/FMA intermediates near [0.5, 2) and defers
+  true overflow/underflow handling to final result packing.
 - `fpu_compare_unit_pipe`: 2 stages. Stage 0 unpacks/classifies and computes
   compare predicates; stage 1 selects compare/min/max/class result and flags.
 - `fpu_convert_unit_pipe`: 2-cycle conversion pipe with I2F, F2F, and F2I

@@ -3,9 +3,9 @@
 module tb_fpu_div_pipe;
   import fpu_pkg::*;
 
-  localparam int unsigned NUM_CASES = 43;
+  localparam int unsigned NUM_CASES = 55;
   localparam int unsigned TIMEOUT_CYCLES = 260;
-  localparam int unsigned RANDOM_VEC_COUNT = 10000;
+  localparam int unsigned RANDOM_VEC_COUNT = 12560;
   localparam int unsigned SUBNORMAL_VEC_COUNT = 10000;
   localparam int unsigned RANDOM_PRINT_LIMIT = 20;
 
@@ -211,6 +211,30 @@ module tb_fpu_div_pipe;
                           nanbox_s(32'h3f80_0000), nanbox_s(32'h4119999a), idx);
       42: return make_req(FPU_FMT_S, FPU_RM_RNE,
                           nanbox_s(32'h3f80_0000), nanbox_s(32'h41200000), idx);
+      43: return make_req(FPU_FMT_D, FPU_RM_RNE,
+                          64'h4008_0000_0000_0000, 64'h4008_0000_0000_0000, idx);
+      44: return make_req(FPU_FMT_D, FPU_RM_RTZ,
+                          64'h4008_0000_0000_0000, 64'h4008_0000_0000_0000, idx);
+      45: return make_req(FPU_FMT_D, FPU_RM_RDN,
+                          64'h4008_0000_0000_0000, 64'h4008_0000_0000_0000, idx);
+      46: return make_req(FPU_FMT_D, FPU_RM_RUP,
+                          64'h4008_0000_0000_0000, 64'h4008_0000_0000_0000, idx);
+      47: return make_req(FPU_FMT_D, FPU_RM_RMM,
+                          64'h4008_0000_0000_0000, 64'h4008_0000_0000_0000, idx);
+      48: return make_req(FPU_FMT_S, FPU_RM_RNE,
+                          nanbox_s(32'h4040_0000), nanbox_s(32'h4040_0000), idx);
+      49: return make_req(FPU_FMT_S, FPU_RM_RTZ,
+                          nanbox_s(32'h4040_0000), nanbox_s(32'h4040_0000), idx);
+      50: return make_req(FPU_FMT_S, FPU_RM_RDN,
+                          nanbox_s(32'h4040_0000), nanbox_s(32'h4040_0000), idx);
+      51: return make_req(FPU_FMT_S, FPU_RM_RUP,
+                          nanbox_s(32'h4040_0000), nanbox_s(32'h4040_0000), idx);
+      52: return make_req(FPU_FMT_S, FPU_RM_RMM,
+                          nanbox_s(32'h4040_0000), nanbox_s(32'h4040_0000), idx);
+      53: return make_req(FPU_FMT_D, FPU_RM_RNE,
+                          64'hc008_0000_0000_0000, 64'h4008_0000_0000_0000, idx);
+      54: return make_req(FPU_FMT_S, FPU_RM_RNE,
+                          nanbox_s(32'h4040_0000), nanbox_s(32'hc040_0000), idx);
       default: return make_req(FPU_FMT_D, FPU_RM_RNE,
                                case_data_a(idx),
                                case_data_b(idx),
@@ -282,6 +306,10 @@ module tb_fpu_div_pipe;
       40: return nanbox_s(32'h3de1_0e10);         // 1.0f / 9.1f
       41: return nanbox_s(32'h3dd5_5555);         // 1.0f / 9.6f
       42: return nanbox_s(32'h3dcc_cccd);         // 1.0f / 10.0f
+      43, 44, 45, 46, 47: return 64'h3ff0_0000_0000_0000; // 3.0 / 3.0
+      48, 49, 50, 51, 52: return nanbox_s(32'h3f80_0000); // 3.0f / 3.0f
+      53: return 64'hbff0_0000_0000_0000;         // -3.0 / 3.0
+      54: return nanbox_s(32'hbf80_0000);         // 3.0f / -3.0f
       default: return 64'h7ff0_0000_0000_0000;    // overflow
     endcase
   endfunction

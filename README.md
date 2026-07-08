@@ -50,10 +50,10 @@ Simulation outputs are written under `sim/01`, keeping `sim/tb` source-only.
   response FIFO, flush, and vector/multi-issue integration work.
 - `docs/fpu_unit_flow.md` records unit datapath flow diagrams for code reading.
 
-Known issue: the current FDIV iterative datapath does not yet special-case
-finite nonzero `A/A`. Some exact quotient samples can raise `NX`, and RTZ/RDN
-can produce one ulp below `1.0`; random div vectors avoid raw identical
-operands until the final residual/exactness path is fixed.
+FDIV/FSQRT now use constrained exactness vectors (`N*K/K` and `sqrt(k^2)`) to
+cover residual-correction edges. The iterative datapaths run enough Newton
+rounds for candidate precision, then use an integer-domain residual exactness
+check to clear false `NX/UF` and repair exact one-ulp-neighbor candidates.
 
 ## Authors
 

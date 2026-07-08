@@ -7,6 +7,8 @@
 //   t  = a*x
 //   e  = 1.0 - t*x
 //   x' = x + (0.5*x)*e
+//   S-format uses 1 NR round; D-format uses 2 NR rounds before residual
+//   exactness correction.
 //   q0 = a*x
 //   r  = a - q0*q0
 //   q  = q0 + (0.5*r)*x
@@ -50,6 +52,15 @@ module fpu_sqrt_unit_pipe
     logic [52:0]        sig_norm;
     logic signed [15:0] unbiased_exp;
   } fp_sqrt_operand_t;
+
+  typedef struct packed {
+    logic               sign;
+    logic               is_zero;
+    logic               is_inf;
+    logic               is_nan;
+    logic [52:0]        sig_norm;
+    logic signed [15:0] unbiased_exp;
+  } fp_norm_info_t;
 
   logic [NUM_CTX-1:0] ctx_active;
   logic [NUM_CTX-1:0] ctx_ready;
@@ -269,6 +280,183 @@ module fpu_sqrt_unit_pipe
 
   function automatic fpu_data_t pack_zero_pos(input fpu_fmt_e fmt);
     return pack_zero(fmt, 1'b0);
+  endfunction
+
+  function automatic fp_norm_info_t norm_info(input fpu_data_t data, input fpu_fmt_e fmt);
+    fp_norm_info_t info;
+    logic [31:0]   bits_s;
+    logic [63:0]   bits_d;
+    logic [52:0]   sig_raw;
+    logic [5:0]    lop_pos;
+    logic          found;
+    logic [5:0]    lshift;
+
+    info    = '0;
+    bits_s  = data[31:0];
+    bits_d  = data;
+    sig_raw = '0;
+    lop_pos = 6'd0;
+    found   = 1'b0;
+    lshift  = 6'd0;
+
+    if (fmt == FPU_FMT_S) begin
+      info.sign    = bits_s[31];
+      info.is_zero = (bits_s[30:0] == 31'd0);
+      info.is_inf  = (bits_s[30:23] == 8'hff) && (bits_s[22:0] == 23'd0);
+      info.is_nan  = (bits_s[30:23] == 8'hff) && (bits_s[22:0] != 23'd0);
+      if ((bits_s[30:23] != 8'd0) && !info.is_inf && !info.is_nan) begin
+        info.sig_norm     = {1'b1, bits_s[22:0], 29'd0};
+        info.unbiased_exp = $signed({8'd0, bits_s[30:23]}) - S_EXP_BIAS;
+      end else if (!info.is_zero && !info.is_inf && !info.is_nan) begin
+        sig_raw = {1'b0, bits_s[22:0], 29'd0};
+        for (int bit_idx = 52; bit_idx >= 0; bit_idx--) begin
+          if (!found && sig_raw[bit_idx]) begin
+            lop_pos = bit_idx[5:0];
+            found   = 1'b1;
+          end
+        end
+        lshift            = 6'd52 - lop_pos;
+        info.sig_norm     = sig_raw << lshift;
+        info.unbiased_exp = -16'sd126 - $signed({10'd0, lshift});
+      end
+    end else begin
+      info.sign    = bits_d[63];
+      info.is_zero = (bits_d[62:0] == 63'd0);
+      info.is_inf  = (bits_d[62:52] == 11'h7ff) && (bits_d[51:0] == 52'd0);
+      info.is_nan  = (bits_d[62:52] == 11'h7ff) && (bits_d[51:0] != 52'd0);
+      if ((bits_d[62:52] != 11'd0) && !info.is_inf && !info.is_nan) begin
+        info.sig_norm     = {1'b1, bits_d[51:0]};
+        info.unbiased_exp = $signed({5'd0, bits_d[62:52]}) - D_EXP_BIAS;
+      end else if (!info.is_zero && !info.is_inf && !info.is_nan) begin
+        sig_raw = {1'b0, bits_d[51:0]};
+        for (int bit_idx = 52; bit_idx >= 0; bit_idx--) begin
+          if (!found && sig_raw[bit_idx]) begin
+            lop_pos = bit_idx[5:0];
+            found   = 1'b1;
+          end
+        end
+        lshift            = 6'd52 - lop_pos;
+        info.sig_norm     = sig_raw << lshift;
+        info.unbiased_exp = -16'sd1022 - $signed({10'd0, lshift});
+      end
+    end
+
+    return info;
+  endfunction
+
+  function automatic int unsigned trailing_zero_53(input logic [52:0] value);
+    int unsigned count;
+    logic        found;
+
+    count = 53;
+    found = 1'b0;
+    for (int bit_idx = 0; bit_idx < 53; bit_idx++) begin
+      if (!found && value[bit_idx]) begin
+        count = bit_idx;
+        found = 1'b1;
+      end
+    end
+    return count;
+  endfunction
+
+  function automatic int unsigned trailing_zero_106(input logic [105:0] value);
+    int unsigned count;
+    logic        found;
+
+    count = 106;
+    found = 1'b0;
+    for (int bit_idx = 0; bit_idx < 106; bit_idx++) begin
+      if (!found && value[bit_idx]) begin
+        count = bit_idx;
+        found = 1'b1;
+      end
+    end
+    return count;
+  endfunction
+
+  function automatic logic exact_sqrt_result(input fpu_req_t req, input fpu_data_t result);
+    fp_norm_info_t src_info;
+    fp_norm_info_t q_info;
+    logic [105:0]  lhs_sig;
+    logic [105:0]  rhs_sig;
+    logic [105:0]  product;
+    int unsigned   lhs_tz;
+    int unsigned   rhs_tz;
+    int signed     lhs_exp;
+    int signed     rhs_exp;
+
+    src_info = norm_info(req.src_a, req.rs_fmt);
+    q_info   = norm_info(result, req.rs_fmt);
+
+    if (src_info.sign || src_info.is_zero || src_info.is_inf || src_info.is_nan ||
+        q_info.sign || q_info.is_zero || q_info.is_inf || q_info.is_nan) begin
+      return 1'b0;
+    end
+
+    product = q_info.sig_norm * q_info.sig_norm;
+    lhs_tz  = trailing_zero_53(src_info.sig_norm);
+    rhs_tz  = trailing_zero_106(product);
+    lhs_sig = {53'd0, src_info.sig_norm} >> lhs_tz;
+    rhs_sig = product >> rhs_tz;
+    lhs_exp = int'(src_info.unbiased_exp) + 52 + int'(lhs_tz);
+    rhs_exp = (2 * int'(q_info.unbiased_exp)) + int'(rhs_tz);
+
+    return (lhs_sig == rhs_sig) && (lhs_exp == rhs_exp);
+  endfunction
+
+  function automatic logic finite_nonzero_result(input fpu_data_t data, input fpu_fmt_e fmt);
+    logic [31:0] bits_s;
+    logic [63:0] bits_d;
+
+    bits_s = data[31:0];
+    bits_d = data;
+    if (fmt == FPU_FMT_S) begin
+      return (bits_s[30:0] != 31'd0) && (bits_s[30:23] != 8'hff);
+    end
+    return (bits_d[62:0] != 63'd0) && (bits_d[62:52] != 11'h7ff);
+  endfunction
+
+  function automatic fpu_data_t adjacent_result(
+    input fpu_data_t data,
+    input fpu_fmt_e  fmt,
+    input logic      increment_raw
+  );
+    logic [31:0] bits_s;
+    logic [63:0] bits_d;
+
+    bits_s = data[31:0];
+    bits_d = data;
+    if (fmt == FPU_FMT_S) begin
+      bits_s = increment_raw ? (bits_s + 32'd1) : (bits_s - 32'd1);
+      return nanbox_s(bits_s);
+    end
+    bits_d = increment_raw ? (bits_d + 64'd1) : (bits_d - 64'd1);
+    return bits_d;
+  endfunction
+
+  function automatic fpu_resp_t correct_sqrt_exactness(input fpu_resp_t resp, input fpu_req_t req);
+    fpu_resp_t out;
+    fpu_data_t plus_one;
+    fpu_data_t minus_one;
+
+    out = resp;
+    if (exact_sqrt_result(req, resp.result)) begin
+      out.fflags[FPU_FFLAG_NX] = 1'b0;
+      out.fflags[FPU_FFLAG_UF] = 1'b0;
+    end else if (finite_nonzero_result(resp.result, req.rs_fmt)) begin
+      plus_one  = adjacent_result(resp.result, req.rs_fmt, 1'b1);
+      minus_one = adjacent_result(resp.result, req.rs_fmt, 1'b0);
+      if (exact_sqrt_result(req, plus_one)) begin
+        out.result              = plus_one;
+        out.fflags[FPU_FFLAG_NX] = 1'b0;
+        out.fflags[FPU_FFLAG_UF] = 1'b0;
+      end else if (exact_sqrt_result(req, minus_one)) begin
+        out.result              = minus_one;
+        out.fflags[FPU_FFLAG_NX] = 1'b0;
+        out.fflags[FPU_FFLAG_UF] = 1'b0;
+      end
+    end
+    return out;
   endfunction
 
   function automatic fpu_data_t mantissa_data(
@@ -655,11 +843,13 @@ module fpu_sqrt_unit_pipe
             ctx_ready[ret_ctx_pipe[FMA_LATENCY-1]] <= fma_valid_op_o;
           end
           default: begin
-            ctx_resp[ret_ctx_pipe[FMA_LATENCY-1]] <= scale_result(
-              fma_resp_o,
-              ctx_req[ret_ctx_pipe[FMA_LATENCY-1]].rs_fmt,
-              ctx_exp_delta[ret_ctx_pipe[FMA_LATENCY-1]],
-              ctx_req[ret_ctx_pipe[FMA_LATENCY-1]].rm);
+            ctx_resp[ret_ctx_pipe[FMA_LATENCY-1]] <= correct_sqrt_exactness(
+              scale_result(
+                fma_resp_o,
+                ctx_req[ret_ctx_pipe[FMA_LATENCY-1]].rs_fmt,
+                ctx_exp_delta[ret_ctx_pipe[FMA_LATENCY-1]],
+                ctx_req[ret_ctx_pipe[FMA_LATENCY-1]].rm),
+              ctx_req[ret_ctx_pipe[FMA_LATENCY-1]]);
             ctx_done[ret_ctx_pipe[FMA_LATENCY-1]]  <= fma_valid_op_o;
             ctx_ready[ret_ctx_pipe[FMA_LATENCY-1]] <= 1'b0;
           end
@@ -693,7 +883,7 @@ module fpu_sqrt_unit_pipe
           ctx_r[free_idx]          <= '0;
           ctx_exp_delta[free_idx]  <= src.unbiased_exp >>> 1;
           ctx_iter[free_idx]       <= 3'd0;
-          ctx_iter_limit[free_idx] <= (req_i.rs_fmt == FPU_FMT_S) ? 3'd2 : 3'd3;
+          ctx_iter_limit[free_idx] <= (req_i.rs_fmt == FPU_FMT_S) ? 3'd1 : 3'd2;
           ctx_valid_op[free_idx]   <= 1'b1;
         end
       end
