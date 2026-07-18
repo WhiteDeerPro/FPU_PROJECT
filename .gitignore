@@ -18,6 +18,9 @@ ucli.key
 
 # Common temporary files
 .gitrepo/
+__pycache__/
+*.py[cod]
+tags
 FPU_PROJECT_github_key
 FPU_PROJECT_github_key.pub
 FPU_PROJECT_key2

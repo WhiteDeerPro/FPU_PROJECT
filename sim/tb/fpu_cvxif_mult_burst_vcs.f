@@ -1,0 +1,11 @@
+../../rtl/pkg/fpu_pkg.sv
+../../rtl/interfaces/core_v_xif.sv
+../../rtl/common/fpu_barrel_shifter.sv
+../../rtl/common/fpu_grs.sv
+../../rtl/common/fpu_round_inc.sv
+../../rtl/common/fpu_lop.sv
+../../rtl/common/fpu_booth_radix4_compressor.sv
+../../rtl/common/fpu_compressors.sv
+../../rtl/common/fpu_mult_pipe.sv
+../../rtl/units_pipe/fpu_mult_unit_pipe.sv
+../tb/tb_fpu_cvxif_mult_burst.sv

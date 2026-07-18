@@ -3,6 +3,8 @@
 
 rtl/pkg/fpu_pkg.sv
 
+rtl/interfaces/core_v_xif.sv
+
 rtl/common/fpu_barrel_shifter.sv
 rtl/common/fpu_grs.sv
 rtl/common/fpu_round_inc.sv
@@ -31,3 +33,4 @@ rtl/units_pipe/fpu_sqrt_unit_pipe.sv
 rtl/units_pipe/fpu_compare_unit_pipe.sv
 
 rtl/core/fpu_top.sv
+rtl/wrappers/fpu_cvxif_wrapper.sv

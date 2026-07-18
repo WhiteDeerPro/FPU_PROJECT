@@ -10,6 +10,10 @@ FPU_PROJECT/
     pkg/        shared SystemVerilog packages
     common/     reusable RTL blocks, such as fpu_lop
     units/      FPU functional units
+    units_pipe/ pipelined functional units
+    core/       configurable shared FPU backend
+    interfaces/ external protocol interface definitions
+    wrappers/   protocol adapters around the native backend
     filelist.f  RTL compile-order filelist
   sim/
     tb/         testbenches, VCS filelists, and simulation Makefile
@@ -36,6 +40,26 @@ make sgnj
 make sgnj_verdi
 make compare
 make compare_verdi
+make cvxif
+make cvxif_verdi
+make cvxif_verdi_sch
+make cvxif_rerun
+make cvxif_multi
+make cvxif_multi_verdi
+make cvxif_multi_verdi_sch
+make cvxif_coupled
+make cvxif_coupled_verdi
+make cvxif_coupled_verdi_sch
+make cvxif_coupled_rerun
+make cvxif_mult_burst
+make cvxif_mult_burst_verdi
+make cvxif_mult_burst_verdi_sch
+make top_multi
+make top_multi_verdi
+make top_multi_verdi_sch
+make virtual_core
+make virtual_core_verdi
+make virtual_core_verdi_sch
 make clean
 ```
 
@@ -48,6 +72,11 @@ Simulation outputs are written under `sim/01`, keeping `sim/tb` source-only.
   expectations, and throughput-scaling notes.
 - `docs/fpu_top_integration_plan.md` records the planned top-level CSR,
   response FIFO, flush, and vector/multi-issue integration work.
+- `docs/fpu_cvxif.md` documents the first CV-X-IF wrapper, its FPR/fflags
+  sidebands, one-outstanding-transaction-per-port and exact-ID commit limits,
+  and smoke tests.
+- `docs/fpu_multi_issue.md` documents the parameterized 1-to-4 issue/writeback
+  backend with shared arithmetic units and fixed-priority arbitration.
 - `docs/fpu_unit_flow.md` records unit datapath flow diagrams for code reading.
 
 FDIV/FSQRT now use constrained exactness vectors (`N*K/K` and `sqrt(k^2)`) to

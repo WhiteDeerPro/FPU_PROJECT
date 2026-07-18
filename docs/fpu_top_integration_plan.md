@@ -1,19 +1,29 @@
 # FPU Top Integration Plan
 
-This note is a design plan only. It records the next `fpu_top` integration
-steps around architectural state, buffering, flush, and future wider issue.
-No RTL behavior is changed by this document.
+This note records the core/FPU integration direction around architectural
+state, buffering, flush, and wider issue. The shared multi-issue backend,
+response buffering, and native DRAIN-kill policy are implemented.
 
 ## Current Top Boundary
 
-`rtl/core/fpu_top.sv` is currently a decoded-request execution wrapper:
+`rtl/core/fpu_top.sv` is the decoded-request execution backend:
 
 - The CPU/core provides source operands, formats, rounding mode, `rd`, and
   `tag` in `fpu_req_t`.
 - The FPU dispatches to existing scalar pipe units and returns `fpu_resp_t`.
 - FDIV/FSQRT can deassert `ready_o` when their internal context slots are full.
 - Other units are treated as one-request-per-cycle pipes.
-- Response selection is fixed priority and has no response FIFO yet.
+- Same-cycle unit completions are compacted into a multi-push response FIFO.
+- One to four independent `valid_o/ready_i` lanes provide response backpressure.
+- Accepted requests reserve response capacity until their result handshake.
+- `kill_i` consumes an exact CPU-produced tag mask, suppresses killed responses,
+  and reclaims reservations on drain.
+- An active-tag table prevents a live tag from being reused.
+
+Protocol-specific modules are wrappers around this native boundary. For
+example, `fpu_cvxif_wrapper` configures one to four issue lanes and the same
+number of writeback lanes from `X_NUM_PORTS`; a future AXI4 wrapper can choose
+its own queueing and configured width.
 
 That boundary is good for unit integration, but not yet enough for a complete
 core-facing FPU subsystem.
@@ -54,12 +64,11 @@ The 32 x 64-bit floating-point register file is intentionally left out for now.
 It belongs either in the CPU register-file subsystem or in a larger coprocessor
 wrapper that also owns decode, dependencies, commit, and precise exceptions.
 
-## FIFO And Dataflow Waiting
+## Implemented Response FIFO
 
-The first real top-level dataflow problem is response collision. Independent
-units can complete in the same cycle, but the current `fpu_top` output mux
-selects one fixed-priority response and drops the others. Before sustained
-mixed issue is enabled, add a small response collector.
+Independent units can complete in the same cycle. `fpu_top` compacts all
+valid completions in deterministic unit order and writes them into a
+parameterized response FIFO (`RESP_FIFO_DEPTH`, default 32).
 
 Recommended shape:
 
@@ -73,66 +82,64 @@ unit dispatch valid bits
   +--> mul pipe ----+
   +--> fma pipe ----+
   +--> div pipe ----+--> response collector --> response FIFO --> valid_o/resp_o
-  +--> sqrt pipe ---+
+  +--> sqrt pipe ---+                         +--> WB lane 0
   +--> convert -----+
   +--> compare -----+
-  +--> sgnj/move ---+
+  +--> sgnj/move ---+                         +--> WB lane N
 ```
 
-Implementation choices:
+Implemented policy:
 
-- Minimal path: collect all same-cycle completions into a small multi-push
-  response FIFO. If the FIFO cannot accept the worst-case number of completions,
-  throttle issue early enough to prevent overflow.
-- Conservative path: add one-entry skid registers per unit plus a single
-  response FIFO push port. This is simpler to time, but needs per-unit
-  backpressure or "do not issue when skid may overflow" bookkeeping.
-- Scoreboard-aware path: let the CPU scoreboard track destination readiness and
-  let the FPU response queue preserve enough `tag`/`rd` metadata for writeback.
+- Every accepted supported request increments an outstanding reservation count.
+- A `valid_o[lane] && ready_i[lane]` handshake releases one reservation.
+- New requests stop when all FIFO capacity has been reserved, even if some
+  reserved operations are still executing in leaf pipelines.
+- Every same-cycle completion is pushed; up to `WRITEBACK_WIDTH` FIFO results
+  may be moved to writeback holding lanes per cycle.
+- `resp_o`, `valid_op_o`, and `valid_o` remain stable while `ready_i` is low.
 
-`ready_o` should eventually mean "the top can accept this request without
-losing a future response", not only "the selected FDIV/FSQRT context is free".
+`ready_o` now means "the top can accept this request without losing its future
+response" as well as "the selected FDIV/FSQRT context is available".
 
-## Flush Requirements
+## Implemented Kill Contract
 
 `fpu_pkg` already defines:
 
 ```systemverilog
 typedef struct packed {
-  logic     valid;
-  fpu_tag_t min_tag;
-} fpu_flush_t;
+  logic                     valid;
+  logic                     all;
+  logic [FPU_TAG_COUNT-1:0] tag_mask;
+} fpu_kill_t;
 ```
 
-The missing contract is tag age ordering. Before coding, define one of these
-policies explicitly:
+The CPU/integration layer owns branch and ROB age, including circular-pointer
+wrap, and supplies the exact FPU tags to kill. `fpu_top` is a pure consumer and
+does not compare tag values to infer program order.
 
-- Flush all in-flight requests with `tag >= min_tag`.
-- Keep all requests with `tag < min_tag`.
-- Use a wrapping age comparison if tags are allocated from a circular ROB.
+During a kill cycle issue is stopped. Matching arithmetic operations may
+physically finish, but the backend filters them at completion, in buffered
+responses, and in writeback holding lanes. A killed result never asserts the
+external `valid_o`; its response reservation and active tag are released when
+it drains. A killed item already in the ordered central FIFO can be delayed by
+an earlier surviving writeback item held under backpressure. There is no
+requirement to zero inactive datapath registers.
 
-Recommended behavior after the policy is fixed:
+The CPU continues to own precise state: it records per-instruction flags in
+the ROB and ORs them into architectural `fcsr.fflags` only at ordered commit.
 
-- Add `flush_i` to `fpu_top` and to every pipe/context unit that can hold
-  in-flight work.
-- Carry `tag`, `rd`, and sideband metadata through every pipeline stage.
-- On flush, clear matching valid bits in fixed-latency pipes.
-- In FDIV/FSQRT, invalidate matching context slots and suppress late FMA
-  sub-results for killed contexts.
-- Flush response FIFO entries whose tags are killed.
-- Do not OR killed instruction flags into architectural `fcsr.fflags`.
-
-The flush path should kill visibility, not necessarily zero every datapath
-register. Valid-bit masking is enough as long as stale responses cannot escape.
+The CV-X-IF wrapper uses a different integration policy: a killed commit is
+dropped in its protocol slot, and only a non-kill committed instruction enters
+`fpu_top`. It therefore ties the native `kill_i` input low.
 
 ## Vector And Multi-Issue Direction
 
 The current scalar arithmetic units are still useful for wider designs. The
 scaling work belongs around dispatch, metadata, and response collection.
 
-For scalar superscalar:
+For scalar superscalar (implemented backend portion):
 
-- Add multiple decoded request lanes in front of `fpu_top`.
+- Connect one to four decoded request lanes to `fpu_top`.
 - Use a dispatcher to route lanes to per-unit queues.
 - Keep one scoreboard/ROB tag per issued request.
 - Preserve precise retirement in the core, not inside arithmetic pipes.
@@ -154,13 +161,15 @@ flag accrual.
 
 ## Suggested Milestones
 
-1. Add `tb_fpu_top` smoke/regression coverage with Verdi-friendly `dbg_*`
-   signals around dispatch, ready, response priority, and result payloads.
-2. Define the flush tag ordering contract in package comments or a short spec.
-3. Add response collector/FIFO planning assertions before changing issue rate.
+1. `tb_fpu_top` smoke/regression coverage with Verdi-friendly `dbg_*` signals
+   around dispatch, ready, completion collisions, and result payloads:
+   implemented.
+2. Define the kill ownership contract: implemented as an exact CPU-produced
+   tag mask consumed by the backend; the FPU does not infer program age.
+3. Response collector/FIFO and capacity reservation: implemented.
 4. Add top-level `frm_i` only if the CPU does not already resolve dynamic
    rounding.
-5. Add flush valid-bit masking to fixed-latency pipes, then to FDIV/FSQRT
-   contexts.
+5. Add architecturally visible kill masking and drain accounting: implemented
+   centrally in `fpu_top`; leaf-pipe power cancellation remains optional.
 6. Revisit 32 x 64-bit register-file ownership when the core/FPU integration
    boundary is clearer.

@@ -11,8 +11,8 @@
 - The top data bus is 64-bit.
 - Double-precision operands use the full 64-bit encoding.
 - Single-precision operands use the low 32 bits and follow RISC-V NaN-boxing in the high 32 bits.
-- The current `rtl/core/fpu_top.sv` is a decoded-request wrapper, not a full
-  RISC-V coprocessor shell.
+- `rtl/core/fpu_top.sv` is the configurable decoded-request backend, not a full
+  RISC-V coprocessor shell. Protocol conversion belongs in sibling wrappers.
 
 ## Type Model
 
@@ -26,16 +26,42 @@ The FPU `op` field describes the operation family after CPU decode. Concrete ope
 
 This keeps the top-level bus compact while still distinguishing single/double floating-point and signed/unsigned integer conversions.
 
+## Protocol Wrapper Organization
+
+The native backend does not know whether requests originate from CV-X-IF,
+AXI4, a tightly coupled CPU port, or a testbench:
+
+```text
+fpu_cvxif_wrapper ----+
+fpu_axi4_wrapper  -----+--> fpu_top #(ISSUE_WIDTH, WRITEBACK_WIDTH)
+native core port  -----+             |
+                                    +--> shared ADD/MUL/FMA/DIV/... units
+                                    +--> response FIFO and writeback lanes
+```
+
+Each protocol wrapper owns protocol state, request decoding/packing, response
+IDs, and any clock-domain or bus buffering. It also chooses the elaborated
+native issue/writeback widths. `fpu_top` owns only execution scheduling,
+arithmetic resources, native backpressure, result buffering, tags, and flush.
+
+The CV-X-IF wrapper replicates one to four independent protocol slots and
+configures `fpu_top` issue/writeback width to the same count. An AXI4 peripheral
+wrapper is not implemented yet; it would normally expose command and result
+register/FIFO windows and translate them to the same native arrays.
+
 ## Directory Layout
 
 - `rtl/pkg`: shared packages and top-level bus payload types.
-- `rtl/core`: future FPU top-level shell, request routing, response arbitration.
+- `rtl/core`: configurable protocol-neutral FPU top, routing, and buffering.
+- `rtl/wrappers`: CV-X-IF and future AXI4/native protocol adapters.
 - `rtl/common`: reusable combinational building blocks, such as barrel shifters,
   leading-one position encoders, classify, unpack, normalize, round, and pack
   helpers.
-- `rtl/units`: operation-level units, such as add/sub, multiply, compare,
-  convert, move, and future div/sqrt units.
-- `sim/tb`: future testbenches.
+- `rtl/units`: combinational operation-level units, such as add/sub, multiply,
+  compare, convert, move, and sign injection.
+- `rtl/units_pipe`: pipelined add/multiply/FMA/convert/compare and interleaved
+  divide/square-root units.
+- `sim/tb`: self-checking unit, integration, protocol, and stress testbenches.
 - `docs`: architecture notes and design decisions.
 
 ## Related Notes
@@ -46,26 +72,30 @@ This keeps the top-level bus compact while still distinguishing single/double fl
 - `docs/fpu_compressor_notes.md`: bit-compressor diagrams used by multiplier
   and lookup-table reduction logic.
 
-## Top Wrapper Status
+## Native Top Status
 
-`fpu_top` can be instantiated by a core that already performs decode and owns
-the architectural state. The usable interface today is:
+`fpu_top` can be instantiated by a core that already performs decode and
+owns the architectural state. The usable interface today is:
 
 - `valid_i/ready_o` request handshake.
 - `fpu_req_t` decoded operation payload, including source data, formats,
   rounding mode, destination register, and tag.
-- `valid_o`, `fpu_resp_t`, and `valid_op_o` response payload.
-- Backpressure is only driven by FDIV/FSQRT context availability; other pipe
-  units accept one request per cycle.
+- `valid_o/ready_i`, `fpu_resp_t`, and `valid_op_o` response handshake.
+- Request backpressure is driven by FDIV/FSQRT context availability and by
+  reservation capacity in the response FIFO.
+- Same-cycle completions from independent units are compacted into the response
+  FIFO without fixed-priority loss.
+- `kill_i {valid,all,tag_mask}` consumes the exact FPU-tag set selected by the
+  CPU integration layer.
+- A live-tag table prevents tag reuse until normal writeback or killed physical
+  drain releases the old operation.
+- Native callers must provide a supported decoded operation. The legacy
+  `DECODE_NONE` path is consumed without producing a response; protocol wrappers
+  reject unsupported instructions before the native boundary.
 
 The wrapper still needs these integration pieces before it should be treated as
 a complete core-facing FPU subsystem:
 
-- A response FIFO or scoreboard-aware return path. The current response mux has
-  fixed priority and can drop same-cycle completions from unrelated pipes under
-  sustained mixed issue.
-- A flush input. `fpu_pkg` already defines `fpu_flush_t {valid, min_tag}`, but
-  `fpu_top` does not consume it yet.
 - CSR plumbing. `frm`/dynamic rounding, accrued `fflags`/`fcsr`, and any
   privileged CSR reflection are expected to live in the CPU/CSR block today.
 - ISA configuration. `CSR_MISA` is not implemented inside this FPU; the core
@@ -88,25 +118,16 @@ CSR storage unless it is wrapped into a larger coprocessor block.
 
 ## Flush Direction
 
-There is no need for active out-of-order execution inside the FPU for the
-current design. The core should remain responsible for issue order,
-dependencies, and commit. What the FPU does need is kill/flush support for
-speculative pipe contents.
-
-Recommended shape:
-
-- Add `flush_i: fpu_flush_t` to `fpu_top` and every pipe unit that can hold
-  multiple in-flight requests.
-- Carry `tag` through every pipeline stage and div/sqrt context.
-- On `flush_i.valid`, clear stage/context valid bits whose tag is younger than
-  or equal to the chosen policy around `flush_i.min_tag`.
-- Do not update architectural `fcsr` directly from flushed responses; the core
-  only accrues flags at commit.
-
-The existing `min_tag` name suggests an age-threshold policy. Before coding,
-the core tag ordering should be made explicit: either "flush tag >= min_tag" or
-"keep tag < min_tag". Once that convention is fixed, the hardware is mostly
-valid-bit masking plus div/sqrt context invalidation.
+There is no need for active out-of-order execution inside the FPU. The core
+remains responsible for dependencies, ROB order, and commit. The CPU or
+protocol adapter translates branch/ROB recovery into the exact
+`kill_i.tag_mask`; the FPU never compares numerical tags to infer age. Rather
+than adding kill ports to every arithmetic leaf, the backend uses DRAIN kill:
+already-issued work physically drains while killed tags are filtered at
+completion, FIFO, and writeback. Killed per-instruction `fflags` never reach
+writeback; surviving flags enter architectural `fcsr` only at CPU commit.
+An earlier surviving response held in a writeback lane can delay reclamation of
+a killed entry still behind it in the ordered central FIFO.
 
 ## Superscalar And Vector-Like Scaling
 
@@ -115,15 +136,20 @@ and scheduling problem first, not a different arithmetic datapath.
 
 Useful near-term support:
 
-- One decoded scalar request per cycle into `fpu_top`.
+- One to four decoded scalar requests per cycle into `fpu_top`.
 - Independent unit pipelines for add/mul/fma/compare/convert plus interleaved
   div/sqrt contexts.
-- A response FIFO that can accept multiple same-cycle unit completions or
-  otherwise applies backpressure before collisions happen.
+- The implemented response FIFO accepts multiple same-cycle unit completions
+  and applies request backpressure based on reserved response capacity.
 
 For superscalar scalar cores, the clean extension is multiple issue lanes into a
 front-end dispatcher with scoreboarding and per-unit queues. Arithmetic units
 can stay scalar internally.
+
+`rtl/core/fpu_top.sv` provides the shared-unit implementation:
+1-to-4 issue lanes, fixed low-index arbitration for same-unit conflicts, and
+1-to-4 independent writeback holding lanes. It does not replicate arithmetic
+units. Multi-CV-X-IF protocol tracking remains a wrapper-level task.
 
 For vector workloads, the likely design is lane replication around the existing
 scalar units:
@@ -137,9 +163,9 @@ scalar units:
   workloads justify lane replication.
 
 So yes, vector-like demand is worth planning for. The current scalar unit
-boundary is compatible with it, but `fpu_top` needs a stronger dispatcher,
-response buffering, flush tagging, and metadata sideband before superscalar or
-vector wrappers are pleasant to build.
+boundary and shared dispatcher/response/kill backend are compatible with it;
+vector integration still needs element metadata, mask/tail handling, and any
+per-unit queues required by the target throughput.
 
 ## Convert Operations
 

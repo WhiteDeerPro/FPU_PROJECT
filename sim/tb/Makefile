@@ -30,7 +30,7 @@ VCS_FLAGS := -sverilog \
 SIM_FLAGS := +fsdb+autoflush +fsdb+all +fsdb+struct +fsdb+mda +max_cycles=$(MAX_CYCLES)
 
 # --- Targets ----------------------------------------------------------------
-.PHONY: all compile run verdi verdi_sch clean rerun lop recip_seed_lut rsqrt_seed_lut mult_trig mult_trig_verdi mult_trig_rerun convert convert_pipe convert_verdi convert_rerun add add_pipe add_verdi add_rerun mult mult_cases mult_pipe mult_pipe_common mult_verdi mult_rerun fma fma_cases fma_pipe fma_verdi fma_rerun div_cases div_pipe div_verdi div_rerun sqrt_cases sqrt_pipe sqrt_verdi sqrt_rerun top top_compile top_verdi top_rerun sgnj sgnj_verdi sgnj_rerun compare compare_pipe compare_verdi compare_rerun
+.PHONY: all compile run verdi verdi_sch clean rerun lop recip_seed_lut rsqrt_seed_lut mult_trig mult_trig_verdi mult_trig_rerun convert convert_pipe convert_verdi convert_rerun add add_pipe add_verdi add_rerun mult mult_cases mult_pipe mult_pipe_common mult_verdi mult_rerun fma fma_cases fma_pipe fma_verdi fma_rerun div_cases div_pipe div_verdi div_rerun sqrt_cases sqrt_pipe sqrt_verdi sqrt_rerun top top_compile top_verdi top_rerun top_multi top_multi_verdi top_multi_verdi_sch virtual_core virtual_core_verdi virtual_core_verdi_sch sgnj sgnj_verdi sgnj_rerun compare compare_pipe compare_verdi compare_rerun cvxif cvxif_verdi cvxif_verdi_sch cvxif_rerun cvxif_multi cvxif_multi_verdi cvxif_multi_verdi_sch cvxif_coupled cvxif_coupled_verdi cvxif_coupled_verdi_sch cvxif_coupled_rerun cvxif_mult_burst cvxif_mult_burst_verdi cvxif_mult_burst_verdi_sch
 
 all: clean compile run
 
@@ -163,6 +163,64 @@ top_verdi:
 	$(MAKE) verdi FLIST=fpu_top_vcs.f TOP=tb_fpu_top FSDB_FILE=tb_fpu_top.fsdb
 
 top_rerun: top
+
+top_multi:
+	$(MAKE) clean compile run FLIST=fpu_top_multi_vcs.f TOP=tb_fpu_top_multi MAX_CYCLES=5000
+
+top_multi_verdi:
+	$(MAKE) verdi FLIST=fpu_top_multi_vcs.f TOP=tb_fpu_top_multi FSDB_FILE=tb_fpu_top_multi.fsdb
+
+top_multi_verdi_sch:
+	$(MAKE) verdi_sch FLIST=fpu_top_multi_vcs.f TOP=tb_fpu_top_multi
+
+virtual_core:
+	$(MAKE) clean compile run FLIST=fpu_virtual_core_vcs.f TOP=tb_fpu_virtual_core MAX_CYCLES=5000
+
+virtual_core_verdi:
+	$(MAKE) verdi FLIST=fpu_virtual_core_vcs.f TOP=tb_fpu_virtual_core FSDB_FILE=tb_fpu_virtual_core.fsdb
+
+virtual_core_verdi_sch:
+	$(MAKE) verdi_sch FLIST=fpu_virtual_core_vcs.f TOP=tb_fpu_virtual_core
+
+cvxif:
+	$(MAKE) clean compile run FLIST=fpu_cvxif_wrapper_vcs.f TOP=tb_fpu_cvxif_wrapper MAX_CYCLES=5000
+
+cvxif_verdi:
+	$(MAKE) verdi FLIST=fpu_cvxif_wrapper_vcs.f TOP=tb_fpu_cvxif_wrapper FSDB_FILE=tb_fpu_cvxif_wrapper.fsdb
+
+cvxif_verdi_sch:
+	$(MAKE) verdi_sch FLIST=fpu_cvxif_wrapper_vcs.f TOP=tb_fpu_cvxif_wrapper
+
+cvxif_rerun: cvxif cvxif_verdi
+
+cvxif_multi:
+	$(MAKE) clean compile run FLIST=fpu_cvxif_wrapper_vcs.f TOP=tb_fpu_cvxif_wrapper_multi MAX_CYCLES=5000
+
+cvxif_multi_verdi:
+	$(MAKE) verdi FLIST=fpu_cvxif_wrapper_vcs.f TOP=tb_fpu_cvxif_wrapper_multi FSDB_FILE=tb_fpu_cvxif_wrapper_multi.fsdb
+
+cvxif_multi_verdi_sch:
+	$(MAKE) verdi_sch FLIST=fpu_cvxif_wrapper_vcs.f TOP=tb_fpu_cvxif_wrapper_multi
+
+cvxif_coupled:
+	$(MAKE) clean compile run FLIST=fpu_cvxif_wrapper_vcs.f TOP=tb_fpu_cvxif_wrapper_coupled MAX_CYCLES=5000
+
+cvxif_coupled_verdi:
+	$(MAKE) verdi FLIST=fpu_cvxif_wrapper_vcs.f TOP=tb_fpu_cvxif_wrapper_coupled FSDB_FILE=tb_fpu_cvxif_wrapper_coupled.fsdb
+
+cvxif_coupled_verdi_sch:
+	$(MAKE) verdi_sch FLIST=fpu_cvxif_wrapper_vcs.f TOP=tb_fpu_cvxif_wrapper_coupled
+
+cvxif_coupled_rerun: cvxif_coupled cvxif_coupled_verdi
+
+cvxif_mult_burst:
+	$(MAKE) clean compile run FLIST=fpu_cvxif_mult_burst_vcs.f TOP=tb_fpu_cvxif_mult_burst MAX_CYCLES=10000
+
+cvxif_mult_burst_verdi:
+	$(MAKE) verdi FLIST=fpu_cvxif_mult_burst_vcs.f TOP=tb_fpu_cvxif_mult_burst FSDB_FILE=tb_fpu_cvxif_mult_burst.fsdb
+
+cvxif_mult_burst_verdi_sch:
+	$(MAKE) verdi_sch FLIST=fpu_cvxif_mult_burst_vcs.f TOP=tb_fpu_cvxif_mult_burst
 
 sgnj:
 	$(MAKE) rerun FLIST=fpu_sgnj_vcs.f TOP=tb_fpu_sgnj FSDB_FILE=tb_fpu_sgnj.fsdb

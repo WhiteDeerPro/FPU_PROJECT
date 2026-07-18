@@ -4,7 +4,7 @@
 
 TB_DIR := sim/tb
 
-.PHONY: all compile run verdi verdi_sch clean rerun lop recip_seed_lut rsqrt_seed_lut mult_trig mult_trig_verdi mult_trig_rerun convert convert_pipe convert_verdi convert_rerun add add_pipe add_verdi add_rerun mult mult_cases mult_pipe mult_pipe_common mult_verdi mult_rerun fma fma_cases fma_pipe fma_verdi fma_rerun div_cases div_pipe div_verdi div_rerun sqrt_cases sqrt_pipe sqrt_verdi sqrt_rerun top top_compile top_verdi top_rerun sgnj sgnj_verdi sgnj_rerun compare compare_pipe compare_verdi compare_rerun tree
+.PHONY: all compile run verdi verdi_sch clean rerun lop recip_seed_lut rsqrt_seed_lut mult_trig mult_trig_verdi mult_trig_rerun convert convert_pipe convert_verdi convert_rerun add add_pipe add_verdi add_rerun mult mult_cases mult_pipe mult_pipe_common mult_verdi mult_rerun fma fma_cases fma_pipe fma_verdi fma_rerun div_cases div_pipe div_verdi div_rerun sqrt_cases sqrt_pipe sqrt_verdi sqrt_rerun top top_compile top_verdi top_rerun top_multi top_multi_verdi top_multi_verdi_sch virtual_core virtual_core_verdi virtual_core_verdi_sch sgnj sgnj_verdi sgnj_rerun compare compare_pipe compare_verdi compare_rerun cvxif cvxif_verdi cvxif_verdi_sch cvxif_rerun cvxif_multi cvxif_multi_verdi cvxif_multi_verdi_sch cvxif_coupled cvxif_coupled_verdi cvxif_coupled_verdi_sch cvxif_coupled_rerun cvxif_mult_burst cvxif_mult_burst_verdi cvxif_mult_burst_verdi_sch tree
 
 all:
 	$(MAKE) -C $(TB_DIR) all
@@ -158,6 +158,66 @@ top_verdi:
 
 top_rerun:
 	$(MAKE) -C $(TB_DIR) top_rerun
+
+top_multi:
+	$(MAKE) -C $(TB_DIR) top_multi
+
+top_multi_verdi:
+	$(MAKE) -C $(TB_DIR) top_multi_verdi
+
+top_multi_verdi_sch:
+	$(MAKE) -C $(TB_DIR) top_multi_verdi_sch
+
+virtual_core:
+	$(MAKE) -C $(TB_DIR) virtual_core
+
+virtual_core_verdi:
+	$(MAKE) -C $(TB_DIR) virtual_core_verdi
+
+virtual_core_verdi_sch:
+	$(MAKE) -C $(TB_DIR) virtual_core_verdi_sch
+
+cvxif:
+	$(MAKE) -C $(TB_DIR) cvxif
+
+cvxif_verdi:
+	$(MAKE) -C $(TB_DIR) cvxif_verdi
+
+cvxif_verdi_sch:
+	$(MAKE) -C $(TB_DIR) cvxif_verdi_sch
+
+cvxif_rerun:
+	$(MAKE) -C $(TB_DIR) cvxif_rerun
+
+cvxif_multi:
+	$(MAKE) -C $(TB_DIR) cvxif_multi
+
+cvxif_multi_verdi:
+	$(MAKE) -C $(TB_DIR) cvxif_multi_verdi
+
+cvxif_multi_verdi_sch:
+	$(MAKE) -C $(TB_DIR) cvxif_multi_verdi_sch
+
+cvxif_coupled:
+	$(MAKE) -C $(TB_DIR) cvxif_coupled
+
+cvxif_coupled_verdi:
+	$(MAKE) -C $(TB_DIR) cvxif_coupled_verdi
+
+cvxif_coupled_verdi_sch:
+	$(MAKE) -C $(TB_DIR) cvxif_coupled_verdi_sch
+
+cvxif_coupled_rerun:
+	$(MAKE) -C $(TB_DIR) cvxif_coupled_rerun
+
+cvxif_mult_burst:
+	$(MAKE) -C $(TB_DIR) cvxif_mult_burst
+
+cvxif_mult_burst_verdi:
+	$(MAKE) -C $(TB_DIR) cvxif_mult_burst_verdi
+
+cvxif_mult_burst_verdi_sch:
+	$(MAKE) -C $(TB_DIR) cvxif_mult_burst_verdi_sch
 
 tree:
 	@find . -path './.git' -prune -o -path './.agents' -prune -o -print

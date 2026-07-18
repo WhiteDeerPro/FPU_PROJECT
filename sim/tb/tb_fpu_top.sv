@@ -9,12 +9,21 @@ module tb_fpu_top;
 
   logic      clk_i;
   logic      rst_ni;
+  fpu_kill_t kill_i;
   logic      valid_i;
   fpu_req_t  req_i;
   logic      ready_o;
   logic      valid_o;
+  logic      ready_i;
   fpu_resp_t resp_o;
   logic      valid_op_o;
+  logic [0:0]      dut_valid_i;
+  fpu_req_t [0:0] dut_req_i;
+  logic [0:0]      dut_ready_o;
+  logic [0:0]      dut_valid_o;
+  logic [0:0]      dut_ready_i;
+  fpu_resp_t [0:0] dut_resp_o;
+  logic [0:0]      dut_valid_op_o;
 
   fpu_resp_t add_resp;
   fpu_resp_t mult_resp;
@@ -78,6 +87,13 @@ module tb_fpu_top;
   int unsigned wait_cnt;
   int unsigned case_idx;
   int unsigned drain_cnt;
+  localparam int unsigned EXPECTED_FIFO_DEPTH = 1024;
+  fpu_resp_t expected_fifo [0:EXPECTED_FIFO_DEPTH-1];
+  logic      expected_valid_op_fifo [0:EXPECTED_FIFO_DEPTH-1];
+  int unsigned expected_head;
+  int unsigned expected_tail;
+  int unsigned collision_cycle_cnt;
+  int unsigned stalled_result_cycle_cnt;
   logic        accepted;
   string       dbg_case_name;
 
@@ -130,15 +146,29 @@ module tb_fpu_top;
   logic        dbg_top_sgnj_valid;
   logic        dbg_top_move_valid;
 
-  fpu_top u_dut (
+  assign dut_valid_i[0] = valid_i;
+  assign dut_req_i[0]   = req_i;
+  assign ready_o        = dut_ready_o[0];
+  assign valid_o        = dut_valid_o[0];
+  assign dut_ready_i[0] = ready_i;
+  assign resp_o         = dut_resp_o[0];
+  assign valid_op_o     = dut_valid_op_o[0];
+
+  fpu_top #(
+    .ISSUE_WIDTH     (1),
+    .WRITEBACK_WIDTH (1),
+    .RESP_FIFO_DEPTH (16)
+  ) u_dut (
     .clk_i     (clk_i),
     .rst_ni    (rst_ni),
-    .valid_i   (valid_i),
-    .req_i     (req_i),
-    .ready_o   (ready_o),
-    .valid_o   (valid_o),
-    .resp_o    (resp_o),
-    .valid_op_o(valid_op_o)
+    .kill_i    (kill_i),
+    .valid_i   (dut_valid_i),
+    .req_i     (dut_req_i),
+    .ready_o   (dut_ready_o),
+    .valid_o   (dut_valid_o),
+    .ready_i   (dut_ready_i),
+    .resp_o    (dut_resp_o),
+    .valid_op_o(dut_valid_op_o)
   );
 
   assign op_addsub  = (req_i.op == FPU_OP_ADD) || (req_i.op == FPU_OP_SUB);
@@ -616,32 +646,93 @@ module tb_fpu_top;
     dbg_s_result_real = $bitstoshortreal(resp_o.result[31:0]);
   end
 
+  task automatic enqueue_expected(
+    input fpu_resp_t response,
+    input logic      valid_op
+  );
+    if (expected_tail >= EXPECTED_FIFO_DEPTH) begin
+      $fatal(1, "tb_fpu_top expected FIFO overflow");
+    end
+    expected_fifo[expected_tail]          = response;
+    expected_valid_op_fifo[expected_tail] = valid_op;
+    expected_tail++;
+  endtask
+
+  // Apply recurring result backpressure. The response payload must remain at
+  // expected_head until a valid/ready handshake consumes it.
+  always @(negedge clk_i) begin
+    if (!rst_ni) begin
+      ready_i = 1'b1;
+    end else begin
+      ready_i = ((cycle_cnt % 7) != 2) && ((cycle_cnt % 7) != 3);
+      if ($countones({move_valid_q, sgnj_valid_q, compare_valid,
+                      convert_valid, sqrt_valid, div_valid,
+                      fma_valid, mult_valid, add_valid}) > 1) begin
+        collision_cycle_cnt++;
+      end
+      // Reference completions are stable here and will be captured by the DUT
+      // response FIFO on the following positive edge.
+      if (div_valid) begin
+        enqueue_expected(div_resp, div_valid_op);
+      end
+      if (sqrt_valid) begin
+        enqueue_expected(sqrt_resp, sqrt_valid_op);
+      end
+      if (fma_valid) begin
+        enqueue_expected(fma_resp, fma_valid_op);
+      end
+      if (mult_valid) begin
+        enqueue_expected(mult_resp, mult_valid_op);
+      end
+      if (add_valid) begin
+        enqueue_expected(add_resp, add_valid_op);
+      end
+      if (convert_valid) begin
+        enqueue_expected(convert_resp, convert_valid_op);
+      end
+      if (compare_valid) begin
+        enqueue_expected(compare_resp, compare_valid_op);
+      end
+      if (sgnj_valid_q) begin
+        enqueue_expected(sgnj_resp_q, sgnj_valid_op_q);
+      end
+      if (move_valid_q) begin
+        enqueue_expected(move_resp_q, move_valid_op_q);
+      end
+    end
+  end
+
   always @(posedge clk_i) begin
-    #2;
     if (rst_ni) begin
       cycle_cnt++;
+      if (valid_o && !ready_i) begin
+        stalled_result_cycle_cnt++;
+      end
 
-      if (valid_o !== exp_valid_q) begin
+      // Sample the transaction at the handshake edge, before the FIFO advances
+      // its read pointer through nonblocking assignments.
+      if (valid_o && (expected_head >= expected_tail)) begin
         fail_cnt++;
-        $display("[FAIL] cycle=%0d valid exp=%0b got=%0b",
-                 cycle_cnt, exp_valid_q, valid_o);
+        $display("[FAIL] cycle=%0d unexpected response tag=0x%02h",
+                 cycle_cnt, resp_o.tag);
       end else if (valid_o) begin
-        if ((valid_op_o === exp_valid_op_q) &&
-            (resp_o.result === exp_resp_q.result) &&
-            (resp_o.fflags === exp_resp_q.fflags) &&
-            (resp_o.tag === exp_resp_q.tag) &&
-            (resp_o.rd === exp_resp_q.rd)) begin
-          pass_cnt++;
-          $display("[PASS] cycle=%0d tag=0x%02h rd=%0d result=0x%016h fflags=0x%02h",
-                   cycle_cnt, resp_o.tag, resp_o.rd, resp_o.result, resp_o.fflags);
+        if ((valid_op_o === expected_valid_op_fifo[expected_head]) &&
+            (resp_o.result === expected_fifo[expected_head].result) &&
+            (resp_o.fflags === expected_fifo[expected_head].fflags) &&
+            (resp_o.tag === expected_fifo[expected_head].tag) &&
+            (resp_o.rd === expected_fifo[expected_head].rd)) begin
+          if (ready_i) begin
+            pass_cnt++;
+            expected_head++;
+          end
         end else begin
           fail_cnt++;
           $display("[FAIL] cycle=%0d valid_op exp=%0b got=%0b result exp=0x%016h got=0x%016h fflags exp=0x%02h got=0x%02h tag exp=0x%02h got=0x%02h rd exp=%0d got=%0d",
-                   cycle_cnt, exp_valid_op_q, valid_op_o,
-                   exp_resp_q.result, resp_o.result,
-                   exp_resp_q.fflags, resp_o.fflags,
-                   exp_resp_q.tag, resp_o.tag,
-                   exp_resp_q.rd, resp_o.rd);
+                   cycle_cnt, expected_valid_op_fifo[expected_head], valid_op_o,
+                   expected_fifo[expected_head].result, resp_o.result,
+                   expected_fifo[expected_head].fflags, resp_o.fflags,
+                   expected_fifo[expected_head].tag, resp_o.tag,
+                   expected_fifo[expected_head].rd, resp_o.rd);
         end
       end
 
@@ -653,7 +744,9 @@ module tb_fpu_top;
 
   initial begin
     rst_ni        = 1'b0;
+    kill_i        = '0;
     valid_i       = 1'b0;
+    ready_i       = 1'b1;
     req_i         = '0;
     pass_cnt      = 0;
     fail_cnt      = 0;
@@ -662,6 +755,10 @@ module tb_fpu_top;
     wait_cnt      = 0;
     case_idx      = 0;
     drain_cnt     = 0;
+    expected_head = 0;
+    expected_tail = 0;
+    collision_cycle_cnt = 0;
+    stalled_result_cycle_cnt = 0;
     accepted      = 1'b0;
     dbg_case_name = "reset";
 
@@ -685,12 +782,14 @@ module tb_fpu_top;
 
       while (!accepted) begin
         @(posedge clk_i);
+        // Sample ready at the same edge used by the DUT. It can change after
+        // the edge when outstanding/FIFO counters update.
+        accepted = ready_o;
         #1;
-        if (ready_o) begin
+        if (accepted) begin
           issue_cnt++;
           valid_i = 1'b0;
           req_i   = '0;
-          accepted = 1'b1;
           dbg_case_name = "accepted";
         end else begin
           wait_cnt++;
@@ -709,9 +808,26 @@ module tb_fpu_top;
       @(posedge clk_i);
       drain_cnt++;
     end
+    #2;
 
-    $display("tb_fpu_top summary: pass=%0d fail=%0d issued=%0d waits=%0d",
-             pass_cnt, fail_cnt, issue_cnt, wait_cnt);
+    $display("tb_fpu_top summary: pass=%0d fail=%0d issued=%0d waits=%0d collisions=%0d stalled_result_cycles=%0d",
+             pass_cnt, fail_cnt, issue_cnt, wait_cnt, collision_cycle_cnt,
+             stalled_result_cycle_cnt);
+    if (expected_head != expected_tail) begin
+      fail_cnt++;
+      $display("[FAIL] expected response queue not empty: head=%0d tail=%0d",
+               expected_head, expected_tail);
+    end
+    if (pass_cnt != issue_cnt) begin
+      fail_cnt++;
+      $display("[FAIL] accepted/result mismatch: issued=%0d consumed=%0d",
+               issue_cnt, pass_cnt);
+    end
+    if ((collision_cycle_cnt == 0) || (stalled_result_cycle_cnt == 0)) begin
+      fail_cnt++;
+      $display("[FAIL] response FIFO stress coverage missing: collisions=%0d stalls=%0d",
+               collision_cycle_cnt, stalled_result_cycle_cnt);
+    end
     if (fail_cnt != 0) begin
       $fatal(1, "tb_fpu_top failed");
     end

@@ -5,6 +5,7 @@ package fpu_pkg;
   parameter int unsigned FPU_RD_W   = 5;
 
   localparam int unsigned FPU_FFLAGS_W = 5;
+  localparam int unsigned FPU_TAG_COUNT = (1 << FPU_TAG_W);
 
   typedef logic [FPU_DATA_W-1:0]   fpu_data_t;
   typedef logic [FPU_TAG_W-1:0]    fpu_tag_t;
@@ -127,9 +128,17 @@ package fpu_pkg;
     fpu_rd_t      rd;
   } fpu_resp_t;
 
+  // Protocol-neutral cancellation bus used inside the FPU backend.  The CPU
+  // integration layer owns instruction age and translates its ROB/commit
+  // policy into this exact set of FPU tags.  `all` is the inexpensive global
+  // flush path; otherwise every asserted bit in `tag_mask` kills one tag.
+  //
+  // fpu_top consumes this representation directly and never infers age from
+  // the numerical tag value.
   typedef struct packed {
-    logic     valid;
-    fpu_tag_t min_tag;
-  } fpu_flush_t;
+    logic                       valid;
+    logic                       all;
+    logic [FPU_TAG_COUNT-1:0]   tag_mask;
+  } fpu_kill_t;
 
 endpackage : fpu_pkg
